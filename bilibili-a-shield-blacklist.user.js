@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         B站A盾黑名单拉黑助手
 // @namespace    http://tampermonkey.net/
-// @version      1.0
+// @version      1.1
 // @description  自动将A盾黑名单中的用户添加到B站黑名单，支持从 listing.ssrv2.ltd 动态获取数据
 // @author       Shiroha23
 // @match        https://space.bilibili.com/*
@@ -27,8 +27,6 @@
         USER_INTERVAL: 500,
         // 每批处理的用户数
         BATCH_SIZE: 10,
-        // 是否自动运行
-        AUTO_RUN: false,
         // 存储键名
         STORAGE_KEY: 'bilibili_blacklist_progress',
         // 黑名单数据源URL
@@ -150,8 +148,44 @@
 
     let BLACKLIST_UIDS = [];
     let DATA_SOURCE = '备用数据';
+    /** 防止重复启动批量拉黑 */
+    let batchBlockRunning = false;
 
     // ==================== 工具函数 ====================
+
+    /**
+     * 跨域拉取文本：优先 GM_xmlhttpRequest（不受页面 CORS 限制），否则回退 fetch
+     */
+    function fetchText(url) {
+        if (typeof GM_xmlhttpRequest !== 'undefined') {
+            return new Promise((resolve, reject) => {
+                GM_xmlhttpRequest({
+                    method: 'GET',
+                    url: url,
+                    timeout: 60000,
+                    onload: function(response) {
+                        if (response.status >= 200 && response.status < 300) {
+                            resolve(response.responseText);
+                        } else {
+                            reject(new Error(`HTTP ${response.status}`));
+                        }
+                    },
+                    onerror: function() {
+                        reject(new Error('网络请求失败'));
+                    },
+                    ontimeout: function() {
+                        reject(new Error('请求超时'));
+                    }
+                });
+            });
+        }
+        return fetch(url, { mode: 'cors', credentials: 'omit' }).then(function(r) {
+            if (!r.ok) {
+                throw new Error(`HTTP ${r.status}`);
+            }
+            return r.text();
+        });
+    }
 
     /**
      * 从 listing.ssrv2.ltd 获取黑名单数据
@@ -169,16 +203,7 @@
         try {
             console.log('🔄 正在从 listing.ssrv2.ltd 获取黑名单数据...');
 
-            const response = await fetch(CONFIG.BLACKLIST_URL, {
-                mode: 'cors',
-                credentials: 'omit'
-            });
-
-            if (!response.ok) {
-                throw new Error(`HTTP ${response.status}`);
-            }
-
-            const html = await response.text();
+            const html = await fetchText(CONFIG.BLACKLIST_URL);
 
             const uids = parseUidsFromHtml(html);
 
@@ -223,16 +248,16 @@
      * 从HTML中解析UID
      */
     function parseUidsFromHtml(html) {
-        const uids = [];
+        const seen = new Set();
         const uidPattern = /space\.bilibili\.com\/(\d+)/g;
         let match;
         while ((match = uidPattern.exec(html)) !== null) {
             const uid = parseInt(match[1], 10);
-            if (!uids.includes(uid)) {
-                uids.push(uid);
+            if (!seen.has(uid)) {
+                seen.add(uid);
             }
         }
-        return uids;
+        return Array.from(seen);
     }
 
     /**
@@ -388,61 +413,70 @@
      * @param {number} startIndex - 开始索引
      */
     async function batchBlock(startIndex = 0) {
+        if (batchBlockRunning) {
+            alert('批量拉黑正在进行中，请等待当前任务结束。');
+            return;
+        }
         if (!isLoggedIn()) {
             alert('请先登录B站账号！');
             return;
         }
 
+        batchBlockRunning = true;
         const total = BLACKLIST_UIDS.length;
         let success = 0;
         let failed = 0;
 
-        console.log(`🚀 开始批量拉黑，从第 ${startIndex + 1} 个用户开始，共 ${total} 个用户`);
+        try {
+            console.log(`🚀 开始批量拉黑，从第 ${startIndex + 1} 个用户开始，共 ${total} 个用户`);
 
-        for (let i = startIndex; i < total; i++) {
-            const uid = BLACKLIST_UIDS[i];
-            console.log(`[${i + 1}/${total}] 正在处理用户: ${uid}`);
+            for (let i = startIndex; i < total; i++) {
+                const uid = BLACKLIST_UIDS[i];
+                console.log(`[${i + 1}/${total}] 正在处理用户: ${uid}`);
 
-            const result = await blockUser(uid);
+                const result = await blockUser(uid);
 
-            if (result) {
-                success++;
-            } else {
-                failed++;
+                if (result) {
+                    success++;
+                } else {
+                    failed++;
+                }
+
+                // 保存进度
+                saveProgress(i + 1);
+
+                // 显示进度通知
+                if ((i + 1) % CONFIG.BATCH_SIZE === 0 || i === total - 1) {
+                    showNotification(
+                        '批量拉黑进度',
+                        `已处理: ${i + 1}/${total}\n成功: ${success}  失败: ${failed}`
+                    );
+                }
+
+                // 延迟处理下一个
+                if (i < total - 1) {
+                    await delay(CONFIG.USER_INTERVAL);
+                }
+
+                // 每批处理后额外延迟
+                if ((i + 1) % CONFIG.BATCH_SIZE === 0 && i < total - 1) {
+                    console.log(`⏳ 批次完成，等待 ${CONFIG.BATCH_INTERVAL}ms 后继续...`);
+                    await delay(CONFIG.BATCH_INTERVAL);
+                }
             }
 
-            // 保存进度
-            saveProgress(i + 1);
+            console.log(`✅ 批量拉黑完成！成功: ${success}, 失败: ${failed}`);
+            showNotification(
+                '批量拉黑完成',
+                `总计: ${total}\n成功: ${success}\n失败: ${failed}`
+            );
 
-            // 显示进度通知
-            if ((i + 1) % CONFIG.BATCH_SIZE === 0 || i === total - 1) {
-                showNotification(
-                    '批量拉黑进度',
-                    `已处理: ${i + 1}/${total}\n成功: ${success}  失败: ${failed}`
-                );
+            // 完成后清除进度
+            if (success + failed === total) {
+                clearProgress();
             }
-
-            // 延迟处理下一个
-            if (i < total - 1) {
-                await delay(CONFIG.USER_INTERVAL);
-            }
-
-            // 每批处理后额外延迟
-            if ((i + 1) % CONFIG.BATCH_SIZE === 0 && i < total - 1) {
-                console.log(`⏳ 批次完成，等待 ${CONFIG.BATCH_INTERVAL}ms 后继续...`);
-                await delay(CONFIG.BATCH_INTERVAL);
-            }
-        }
-
-        console.log(`✅ 批量拉黑完成！成功: ${success}, 失败: ${failed}`);
-        showNotification(
-            '批量拉黑完成',
-            `总计: ${total}\n成功: ${success}\n失败: ${failed}`
-        );
-
-        // 完成后清除进度
-        if (success + failed === total) {
-            clearProgress();
+        } finally {
+            batchBlockRunning = false;
         }
     }
 
@@ -485,10 +519,14 @@
             max-width: 300px;
             animation: slideIn 0.3s ease;
         `;
-        tip.innerHTML = `
-            <div style="font-weight: bold; margin-bottom: 8px; font-size: 14px;">${title}</div>
-            <div style="font-size: 13px; line-height: 1.5; white-space: pre-line;">${message}</div>
-        `;
+        const titleEl = document.createElement('div');
+        titleEl.style.cssText = 'font-weight: bold; margin-bottom: 8px; font-size: 14px;';
+        titleEl.textContent = title;
+        const msgEl = document.createElement('div');
+        msgEl.style.cssText = 'font-size: 13px; line-height: 1.5; white-space: pre-line;';
+        msgEl.textContent = message;
+        tip.appendChild(titleEl);
+        tip.appendChild(msgEl);
 
         // 添加动画样式
         if (!document.getElementById('bilibili-blacklist-style')) {
@@ -712,7 +750,7 @@
                 <button id="bl-listing-close" style="background: none; border: none; cursor: pointer; font-size: 18px; color: #9499a0;">×</button>
             </div>
             <div style="margin-bottom: 15px; padding: 10px; background: #f6f7f8; border-radius: 8px; font-size: 13px; color: #61666d;">
-                <div>当前页面 UID 数量: <strong style="color: #00a1d6;">${currentUids.length}</strong></div>
+                <div>当前页面 UID 数量: <strong id="bl-listing-uid-count" style="color: #00a1d6;">${currentUids.length}</strong></div>
             </div>
             <div style="display: flex; flex-direction: column; gap: 8px;">
                 <button id="bl-import-from-page" style="padding: 10px; background: #00a1d6; color: white; border: none; border-radius: 6px; cursor: pointer; font-size: 14px; font-weight: 500; transition: background 0.2s;">
@@ -737,7 +775,8 @@
                 DATA_SOURCE = '当前页面';
                 saveBlacklistCache(uids);
                 showNotification('导入成功', `已从当前页面导入 ${uids.length} 条黑名单数据`);
-                panel.querySelector('div[style*="margin-bottom: 15px; padding: 10px;"] strong').textContent = uids.length;
+                const countEl = document.getElementById('bl-listing-uid-count');
+                if (countEl) countEl.textContent = String(uids.length);
             } else {
                 showNotification('导入失败', '当前页面未找到任何 UID');
             }
@@ -764,7 +803,7 @@
                 DATA_SOURCE = '跨域名缓存';
                 console.log(`📋 使用跨域名缓存数据: ${cached.length} 条`);
             } else {
-                const result = await fetchBlacklistFromRemote();
+                await fetchBlacklistFromRemote();
                 console.log(`📋 黑名单用户总数: ${BLACKLIST_UIDS.length}`);
             }
 
