@@ -42,7 +42,9 @@
         // 是否跳过已拉黑的用户
         SKIP_ALREADY_BLOCKED: true,
         // 当前黑名单缓存键名
-        MY_BLACKS_CACHE_KEY: 'bilibili_my_blacks_cache'
+        MY_BLACKS_CACHE_KEY: 'bilibili_my_blacks_cache',
+        // A盾黑名单刷新冷却时间（毫秒）
+        REFRESH_COOLDOWN: 5000
     };
 
     // ==================== 黑名单数据 ====================
@@ -164,6 +166,8 @@
     let batchBlockPaused = false;
     /** 批量拉黑完成状态 */
     let batchBlockFinished = false;
+    /** A盾黑名单上次刷新时间 */
+    let lastRefreshTime = 0;
     /** 我的黑名单UID集合（用于快速检查） */
     let myBlacklistUids = new Set();
     /** 已跳过的用户数量 */
@@ -1525,6 +1529,18 @@
         // 子选项点击事件
         document.getElementById('bl-refresh-remote').addEventListener('click', async (e) => {
             e.stopPropagation();
+            
+            // 检查冷却时间
+            const now = Date.now();
+            const timeSinceLastRefresh = now - lastRefreshTime;
+            if (timeSinceLastRefresh < CONFIG.REFRESH_COOLDOWN) {
+                const remainingSeconds = Math.ceil((CONFIG.REFRESH_COOLDOWN - timeSinceLastRefresh) / 1000);
+                showNotification('刷新冷却中', `请等待 ${remainingSeconds} 秒后再刷新`);
+                const menu = document.getElementById('bl-refresh-menu');
+                menu.style.display = 'none';
+                return;
+            }
+            
             const btn = document.getElementById('bl-refresh-data');
             const originalText = btn.innerHTML;
             btn.innerHTML = '⌛ 刷新中...';
@@ -1538,6 +1554,7 @@
                     BLACKLIST_UIDS = uids;
                     DATA_SOURCE = 'listing.ssrv2.ltd';
                     batchBlockFinished = false;
+                    lastRefreshTime = Date.now();
                     saveBlacklistCache(uids);
                     console.log(`✅ 成功获取 ${uids.length} 条黑名单数据`);
                     
