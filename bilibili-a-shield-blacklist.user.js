@@ -162,6 +162,8 @@
     let batchBlockRunning = false;
     /** 批量拉黑暂停状态 */
     let batchBlockPaused = false;
+    /** 批量拉黑完成状态 */
+    let batchBlockFinished = false;
     /** 我的黑名单UID集合（用于快速检查） */
     let myBlacklistUids = new Set();
     /** 已跳过的用户数量 */
@@ -184,6 +186,9 @@
             } else if (batchBlockRunning) {
                 statusText = '运行中';
                 statusColor = '#52c41a';
+            } else if (batchBlockFinished) {
+                statusText = '已完成';
+                statusColor = '#13c2c2';
             }
             
             statusEl.textContent = statusText;
@@ -616,6 +621,7 @@
         }
 
         batchBlockRunning = true;
+        batchBlockFinished = false;
         skippedCount = 0;
         const total = BLACKLIST_UIDS.length;
         let success = 0;
@@ -741,6 +747,7 @@
             }
 
             console.log(`✅ 批量拉黑完成！成功: ${success}, 失败: ${failed}, 跳过: ${skippedCount}`);
+            batchBlockFinished = true;
             showNotification(
                 '批量拉黑完成',
                 `总计: ${total}\n成功: ${success}\n失败: ${failed}\n跳过: ${skippedCount}`
@@ -988,6 +995,7 @@
     function applyImportedUids(uids) {
         BLACKLIST_UIDS = uids;
         DATA_SOURCE = '用户导入';
+        batchBlockFinished = false;
         saveBlacklistCache(uids);
         clearProgress();
     }
@@ -1410,7 +1418,7 @@
                 <div>当前进度: <strong style="color: #00a1d6;">${progress}</strong> / ${total}</div>
                 <div>数据来源: <strong style="color: #18191c;">${DATA_SOURCE}</strong></div>
                 <div>登录状态: <strong style="color: ${isLoggedIn() ? '#00aeec' : '#f25d8e'};">${isLoggedIn() ? '已登录' : '未登录'}</strong></div>
-                <div>当前状态: <strong id="bl-current-status" style="color: ${batchBlockPaused ? '#faad14' : batchBlockRunning ? '#52c41a' : '#9499a0'};">${batchBlockPaused ? '已暂停' : batchBlockRunning ? '运行中' : '待运行'}</strong></div>
+                <div>当前状态: <strong id="bl-current-status" style="color: ${batchBlockPaused ? '#faad14' : batchBlockRunning ? '#52c41a' : batchBlockFinished ? '#13c2c2' : '#9499a0'};">${batchBlockPaused ? '已暂停' : batchBlockRunning ? '运行中' : batchBlockFinished ? '已完成' : '待运行'}</strong></div>
             </div>
             <div style="display: flex; flex-direction: column; gap: 8px;">
                 <button id="bl-control-batch" style="padding: 10px; background: #00a1d6; color: white; border: none; border-radius: 6px; cursor: pointer; font-size: 14px; font-weight: 500; transition: background 0.2s;">
@@ -1529,6 +1537,7 @@
                 if (uids && uids.length > 0) {
                     BLACKLIST_UIDS = uids;
                     DATA_SOURCE = 'listing.ssrv2.ltd';
+                    batchBlockFinished = false;
                     saveBlacklistCache(uids);
                     console.log(`✅ 成功获取 ${uids.length} 条黑名单数据`);
                     
@@ -1556,6 +1565,7 @@
             if (cached && cached.length > 0) {
                 BLACKLIST_UIDS = cached;
                 DATA_SOURCE = '本地缓存';
+                batchBlockFinished = false;
                 console.log(`✅ 使用本地缓存数据: ${cached.length} 条`);
                 
                 panel.remove();
@@ -1573,6 +1583,7 @@
             e.stopPropagation();
             BLACKLIST_UIDS = FALLBACK_UIDS;
             DATA_SOURCE = '备用数据';
+            batchBlockFinished = false;
             console.log(`⚠️ 使用备用数据: ${FALLBACK_UIDS.length} 条`);
             
             panel.remove();
