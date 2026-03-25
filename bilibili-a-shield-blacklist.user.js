@@ -156,6 +156,28 @@
     let DATA_SOURCE = '备用数据';
     /** 防止重复启动批量拉黑 */
     let batchBlockRunning = false;
+    /** 批量拉黑暂停状态 */
+    let batchBlockPaused = false;
+    
+    /** 更新状态显示 */
+    function updateStatusDisplay() {
+        const statusEl = document.getElementById('bl-current-status');
+        if (statusEl) {
+            let statusText = '待运行';
+            let statusColor = '#9499a0';
+            
+            if (batchBlockPaused) {
+                statusText = '已暂停';
+                statusColor = '#faad14';
+            } else if (batchBlockRunning) {
+                statusText = '运行中';
+                statusColor = '#52c41a';
+            }
+            
+            statusEl.textContent = statusText;
+            statusEl.style.color = statusColor;
+        }
+    }
 
     // ==================== 工具函数 ====================
 
@@ -478,11 +500,27 @@
         const total = BLACKLIST_UIDS.length;
         let success = 0;
         let failed = 0;
+        
+        // 更新按钮为暂停状态
+        const btn = document.getElementById('bl-control-batch');
+        if (btn) {
+            btn.innerHTML = '⏸️ 暂停批量拉黑';
+            btn.style.background = '#faad14';
+        }
+        
+        // 更新状态显示
+        updateStatusDisplay();
 
         try {
             console.log(`🚀 开始批量拉黑，从第 ${startIndex + 1} 个用户开始，共 ${total} 个用户`);
 
             for (let i = startIndex; i < total; i++) {
+                // 检查是否暂停
+                while (batchBlockPaused) {
+                    console.log('⏸️ 批量拉黑已暂停，等待继续...');
+                    await delay(1000); // 每秒钟检查一次
+                }
+                
                 const uid = BLACKLIST_UIDS[i];
                 console.log(`[${i + 1}/${total}] 正在处理用户: ${uid}`);
 
@@ -529,6 +567,15 @@
             }
         } finally {
             batchBlockRunning = false;
+            batchBlockPaused = false;
+            // 更新按钮为开始/继续状态
+            if (btn) {
+                const progress = getProgress();
+                btn.innerHTML = progress > 0 ? '▶️ 继续批量拉黑' : '▶️ 开始批量拉黑';
+                btn.style.background = '#00a1d6';
+            }
+            // 更新状态显示
+            updateStatusDisplay();
         }
     }
 
@@ -940,26 +987,47 @@
                 <div>当前进度: <strong style="color: #00a1d6;">${progress}</strong> / ${total}</div>
                 <div>数据来源: <strong style="color: #18191c;">${DATA_SOURCE}</strong></div>
                 <div>登录状态: <strong style="color: ${isLoggedIn() ? '#00aeec' : '#f25d8e'};">${isLoggedIn() ? '已登录' : '未登录'}</strong></div>
+                <div>当前状态: <strong id="bl-current-status" style="color: ${batchBlockPaused ? '#faad14' : batchBlockRunning ? '#52c41a' : '#9499a0'};">${batchBlockPaused ? '已暂停' : batchBlockRunning ? '运行中' : '待运行'}</strong></div>
             </div>
             <div style="display: flex; flex-direction: column; gap: 8px;">
-                <button id="bl-start-batch" style="padding: 10px; background: #00a1d6; color: white; border: none; border-radius: 6px; cursor: pointer; font-size: 14px; font-weight: 500; transition: background 0.2s;">
+                <button id="bl-control-batch" style="padding: 10px; background: #00a1d6; color: white; border: none; border-radius: 6px; cursor: pointer; font-size: 14px; font-weight: 500; transition: background 0.2s;">
                     ${progress > 0 ? '▶️ 继续批量拉黑' : '▶️ 开始批量拉黑'}
                 </button>
-                <button id="bl-refresh-data" style="padding: 10px; background: #52c41a; color: white; border: none; border-radius: 6px; cursor: pointer; font-size: 14px; font-weight: 500; transition: background 0.2s;">
-                    🔄 刷新数据
-                </button>
+                <div style="position: relative;">
+                    <button id="bl-refresh-data" style="padding: 10px; background: #52c41a; color: white; border: none; border-radius: 6px; cursor: pointer; font-size: 14px; font-weight: 500; transition: background 0.2s; width: 100%; text-align: center;">
+                        🔄 刷新数据 ▼
+                    </button>
+                    <div id="bl-refresh-menu" style="position: absolute; top: 100%; left: 0; right: 0; background: white; border: 1px solid #e3e5e7; border-radius: 0 0 6px 6px; box-shadow: 0 4px 12px rgba(0,0,0,0.1); z-index: 100000; display: none;">
+                        <button id="bl-refresh-remote" style="padding: 8px 12px; width: 100%; text-align: left; background: none; border: none; cursor: pointer; font-size: 13px; transition: background 0.2s;">
+                            🛡️ A盾黑名单
+                        </button>
+                        <button id="bl-refresh-cache" style="padding: 8px 12px; width: 100%; text-align: left; background: none; border: none; cursor: pointer; font-size: 13px; transition: background 0.2s;">
+                            💾 本地缓存
+                        </button>
+                        <button id="bl-refresh-fallback" style="padding: 8px 12px; width: 100%; text-align: left; background: none; border: none; cursor: pointer; font-size: 13px; transition: background 0.2s;">
+                            📦 内置数据
+                        </button>
+                    </div>
+                </div>
                 <button id="bl-go-to-listing" style="padding: 10px; background: #722ed1; color: white; border: none; border-radius: 6px; cursor: pointer; font-size: 14px; font-weight: 500; transition: background 0.2s;">
                     🌐 前往黑名单公示页
                 </button>
-                <button id="bl-export-uids" style="padding: 10px; background: #13c2c2; color: white; border: none; border-radius: 6px; cursor: pointer; font-size: 14px; font-weight: 500; transition: background 0.2s;">
-                    📤 导出 UID
-                </button>
-                <button id="bl-import-uids" style="padding: 10px; background: #fa8c16; color: white; border: none; border-radius: 6px; cursor: pointer; font-size: 14px; font-weight: 500; transition: background 0.2s;">
-                    📥 导入 UID
-                </button>
-                <button id="bl-export-my-blacklist" style="padding: 10px; background: #2f54eb; color: white; border: none; border-radius: 6px; cursor: pointer; font-size: 14px; font-weight: 500; transition: background 0.2s;">
-                    🧾 导出我的B站黑名单
-                </button>
+                <div style="position: relative;">
+                    <button id="bl-data-menu" style="padding: 10px; background: #13c2c2; color: white; border: none; border-radius: 6px; cursor: pointer; font-size: 14px; font-weight: 500; transition: background 0.2s; width: 100%; text-align: center;">
+                        📤 导入/导出 ▼
+                    </button>
+                    <div id="bl-data-submenu" style="position: absolute; top: 100%; left: 0; right: 0; background: white; border: 1px solid #e3e5e7; border-radius: 0 0 6px 6px; box-shadow: 0 4px 12px rgba(0,0,0,0.1); z-index: 100000; display: none;">
+                        <button id="bl-export-uids" style="padding: 8px 12px; width: 100%; text-align: left; background: none; border: none; cursor: pointer; font-size: 13px; transition: background 0.2s;">
+                            📤 导出 UID
+                        </button>
+                        <button id="bl-import-uids" style="padding: 8px 12px; width: 100%; text-align: left; background: none; border: none; cursor: pointer; font-size: 13px; transition: background 0.2s;">
+                            📥 导入 UID
+                        </button>
+                        <button id="bl-export-my-blacklist" style="padding: 8px 12px; width: 100%; text-align: left; background: none; border: none; cursor: pointer; font-size: 13px; transition: background 0.2s;">
+                            🧾 导出我的B站黑名单
+                        </button>
+                    </div>
+                </div>
                 <button id="bl-reset-progress" style="padding: 10px; background: #f6f7f8; color: #61666d; border: none; border-radius: 6px; cursor: pointer; font-size: 14px; transition: background 0.2s;">
                     🔄 重置进度
                 </button>
@@ -978,54 +1046,151 @@
             createFloatingButton();
         });
 
-        document.getElementById('bl-start-batch').addEventListener('click', () => {
-            if (!isLoggedIn()) {
-                alert('请先登录B站账号！');
-                return;
+        document.getElementById('bl-control-batch').addEventListener('click', () => {
+            const btn = document.getElementById('bl-control-batch');
+            
+            if (!batchBlockRunning) {
+                // 未运行状态 - 开始/继续批量拉黑
+                if (!isLoggedIn()) {
+                    alert('请先登录B站账号！');
+                    return;
+                }
+                const startIndex = getProgress();
+                batchBlock(startIndex);
+            } else {
+                // 运行状态 - 暂停/继续
+                batchBlockPaused = !batchBlockPaused;
+                if (batchBlockPaused) {
+                    btn.innerHTML = '▶️ 继续批量拉黑';
+                    btn.style.background = '#52c41a';
+                    showNotification('已暂停', '批量拉黑已暂停，可随时点击继续');
+                    console.log('⏸️ 批量拉黑已暂停');
+                } else {
+                    btn.innerHTML = '⏸️ 暂停批量拉黑';
+                    btn.style.background = '#faad14';
+                    showNotification('已继续', '批量拉黑已继续执行');
+                    console.log('▶️ 批量拉黑已继续');
+                }
+                // 更新状态显示
+                updateStatusDisplay();
             }
-            const startIndex = getProgress();
-            batchBlock(startIndex);
         });
 
-        document.getElementById('bl-refresh-data').addEventListener('click', async () => {
+        // 刷新数据按钮点击事件 - 显示/隐藏菜单
+        document.getElementById('bl-refresh-data').addEventListener('click', (e) => {
+            e.stopPropagation();
+            const menu = document.getElementById('bl-refresh-menu');
+            menu.style.display = menu.style.display === 'none' ? 'block' : 'none';
+        });
+
+        // 点击页面其他地方关闭菜单
+        document.addEventListener('click', () => {
+            const menu = document.getElementById('bl-refresh-menu');
+            if (menu) {
+                menu.style.display = 'none';
+            }
+        });
+
+        // 子选项点击事件
+        document.getElementById('bl-refresh-remote').addEventListener('click', async (e) => {
+            e.stopPropagation();
             const btn = document.getElementById('bl-refresh-data');
             const originalText = btn.innerHTML;
             btn.innerHTML = '⌛ 刷新中...';
             btn.disabled = true;
+            
+            try {
+                console.log('🔄 正在从 listing.ssrv2.ltd API 获取黑名单数据...');
+                const uids = await fetchAllUidsFromPublicApi();
+                
+                if (uids && uids.length > 0) {
+                    BLACKLIST_UIDS = uids;
+                    DATA_SOURCE = 'listing.ssrv2.ltd';
+                    saveBlacklistCache(uids);
+                    console.log(`✅ 成功获取 ${uids.length} 条黑名单数据`);
+                    
+                    panel.remove();
+                    createControlPanel();
+                    showNotification('数据刷新', `✅ 成功从 listing.ssrv2.ltd 获取\n${uids.length} 条黑名单数据`);
+                } else {
+                    throw new Error('未找到UID数据');
+                }
+            } catch (error) {
+                console.warn('⚠️ 从远程获取黑名单失败:', error);
+                showNotification('数据刷新失败', `❌ 从A盾黑名单获取数据失败: ${error.message}`);
+            } finally {
+                btn.innerHTML = originalText;
+                btn.disabled = false;
+                const menu = document.getElementById('bl-refresh-menu');
+                menu.style.display = 'none';
+            }
+        });
 
-            const result = await fetchBlacklistFromRemote();
+        document.getElementById('bl-refresh-cache').addEventListener('click', (e) => {
+            e.stopPropagation();
+            const cached = getBlacklistCache();
+            
+            if (cached && cached.length > 0) {
+                BLACKLIST_UIDS = cached;
+                DATA_SOURCE = '本地缓存';
+                console.log(`✅ 使用本地缓存数据: ${cached.length} 条`);
+                
+                panel.remove();
+                createControlPanel();
+                showNotification('数据刷新', `✅ 使用本地缓存数据\n${cached.length} 条数据`);
+            } else {
+                showNotification('数据刷新失败', '❌ 本地缓存为空');
+            }
+            
+            const menu = document.getElementById('bl-refresh-menu');
+            menu.style.display = 'none';
+        });
 
+        document.getElementById('bl-refresh-fallback').addEventListener('click', (e) => {
+            e.stopPropagation();
+            BLACKLIST_UIDS = FALLBACK_UIDS;
+            DATA_SOURCE = '备用数据';
+            console.log(`⚠️ 使用备用数据: ${FALLBACK_UIDS.length} 条`);
+            
             panel.remove();
             createControlPanel();
-
-            let title = '数据刷新';
-            let message = '';
-
-            if (result.fromRemote) {
-                message = `✅ 成功从 listing.ssrv2.ltd 获取\n${result.count} 条黑名单数据`;
-            } else if (result.fromCache) {
-                message = `⚠️ 远程获取失败，使用本地缓存\n${result.count} 条数据`;
-            } else if (result.fromFallback) {
-                message = `❌ 远程和缓存都失败，使用备用数据\n${result.count} 条数据`;
-            }
-
-            showNotification(title, message);
+            showNotification('数据刷新', `⚠️ 使用内置备用数据\n${FALLBACK_UIDS.length} 条数据`);
+            
+            const menu = document.getElementById('bl-refresh-menu');
+            menu.style.display = 'none';
         });
 
         document.getElementById('bl-go-to-listing').addEventListener('click', () => {
             window.open(CONFIG.BLACKLIST_URL, '_blank');
         });
 
-        document.getElementById('bl-export-uids').addEventListener('click', () => {
+        // 导入/导出菜单点击事件 - 显示/隐藏子菜单
+        document.getElementById('bl-data-menu').addEventListener('click', (e) => {
+            e.stopPropagation();
+            const menu = document.getElementById('bl-data-submenu');
+            menu.style.display = menu.style.display === 'none' ? 'block' : 'none';
+        });
+
+        // 子选项点击事件
+        document.getElementById('bl-export-uids').addEventListener('click', (e) => {
+            e.stopPropagation();
             exportBlacklistUids();
+            const menu = document.getElementById('bl-data-submenu');
+            menu.style.display = 'none';
         });
 
-        document.getElementById('bl-import-uids').addEventListener('click', () => {
+        document.getElementById('bl-import-uids').addEventListener('click', (e) => {
+            e.stopPropagation();
             showImportUidDialog();
+            const menu = document.getElementById('bl-data-submenu');
+            menu.style.display = 'none';
         });
 
-        document.getElementById('bl-export-my-blacklist').addEventListener('click', async () => {
+        document.getElementById('bl-export-my-blacklist').addEventListener('click', async (e) => {
+            e.stopPropagation();
             await exportMyBilibiliBlacklist();
+            const menu = document.getElementById('bl-data-submenu');
+            menu.style.display = 'none';
         });
 
         document.getElementById('bl-reset-progress').addEventListener('click', () => {
