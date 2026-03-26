@@ -859,7 +859,7 @@
         const url = URL.createObjectURL(blob);
         const a = document.createElement('a');
         a.href = url;
-        a.download = 'bilibili-a-shield-blacklist-uids-' + new Date().toISOString().slice(0, 10) + '.txt';
+        a.download = 'blacklist-uids-' + new Date().toISOString().slice(0, 10) + '.txt';
         a.style.display = 'none';
         document.body.appendChild(a);
         a.click();
