@@ -1461,6 +1461,9 @@
                 <button id="bl-view-details" style="padding: 10px; background: #1890ff; color: white; border: none; border-radius: 6px; cursor: pointer; font-size: 14px; font-weight: 500; transition: background 0.2s;">
                     📋 查看详细记录
                 </button>
+                <button id="bl-blacklist-manager" style="padding: 10px; background: #722ed1; color: white; border: none; border-radius: 6px; cursor: pointer; font-size: 14px; font-weight: 500; transition: background 0.2s;">
+                    📝 黑名单管理
+                </button>
                 <button id="bl-reset-progress" style="padding: 10px; background: #f6f7f8; color: #61666d; border: none; border-radius: 6px; cursor: pointer; font-size: 14px; transition: background 0.2s;">
                     🔄 重置进度
                 </button>
@@ -1648,6 +1651,11 @@
         // 查看详细记录按钮
         document.getElementById('bl-view-details').addEventListener('click', () => {
             showDetailsPanel();
+        });
+
+        // 黑名单管理按钮
+        document.getElementById('bl-blacklist-manager').addEventListener('click', () => {
+            window.open('https://account.bilibili.com/account/blacklist', '_blank');
         });
     }
 
