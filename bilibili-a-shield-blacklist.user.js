@@ -354,7 +354,7 @@
 
             if (uids && uids.length > 0) {
                 BLACKLIST_UIDS = uids;
-                DATA_SOURCE = 'listing.ssrv2.ltd';
+                DATA_SOURCE = 'A盾黑名单';
                 saveBlacklistCache(uids);
                 console.log(`✅ 成功获取 ${uids.length} 条黑名单数据`);
                 result.success = true;
@@ -1552,7 +1552,7 @@
                 
                 if (uids && uids.length > 0) {
                     BLACKLIST_UIDS = uids;
-                    DATA_SOURCE = 'listing.ssrv2.ltd';
+                    DATA_SOURCE = 'A盾黑名单';
                     batchBlockFinished = false;
                     lastRefreshTime = Date.now();
                     saveBlacklistCache(uids);
@@ -1560,7 +1560,7 @@
                     
                     panel.remove();
                     createControlPanel();
-                    showNotification('数据刷新', `✅ 成功从 listing.ssrv2.ltd 获取\n${uids.length} 条黑名单数据`);
+                    showNotification('数据刷新', `✅ 成功从 A盾黑名单 获取\n${uids.length} 条数据`);
                 } else {
                     throw new Error('未找到UID数据');
                 }
