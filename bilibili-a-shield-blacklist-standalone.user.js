@@ -142,7 +142,7 @@
     let batchBlockFinished = false;
     let myBlacklistUids = new Set();
     let blockDetailsLog = [];
-    const MAX_LOG_ENTRIES = 1000;
+    const MAX_LOG_ENTRIES = 2026;
 
     function loadEmbeddedBlacklist() {
         BLACKLIST_UIDS = FALLBACK_UIDS.slice();

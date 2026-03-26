@@ -173,7 +173,7 @@
     /** 详细日志记录 */
     let blockDetailsLog = [];
     /** 最大日志条数 */
-    const MAX_LOG_ENTRIES = 1000;
+    const MAX_LOG_ENTRIES = 2026;
     
     /** 更新状态显示 */
     function updateStatusDisplay() {
