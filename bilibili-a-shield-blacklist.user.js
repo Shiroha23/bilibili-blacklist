@@ -1630,15 +1630,43 @@
         // 刷新数据按钮点击事件 - 显示/隐藏菜单
         document.getElementById('bl-refresh-data').addEventListener('click', (e) => {
             e.stopPropagation();
-            const menu = document.getElementById('bl-refresh-menu');
-            menu.style.display = menu.style.display === 'none' ? 'block' : 'none';
+            const refreshMenu = document.getElementById('bl-refresh-menu');
+            const dataMenu = document.getElementById('bl-data-submenu');
+            
+            // 关闭其他菜单
+            if (dataMenu) {
+                dataMenu.style.display = 'none';
+            }
+            
+            // 切换当前菜单
+            refreshMenu.style.display = refreshMenu.style.display === 'none' ? 'block' : 'none';
         });
 
-        // 点击页面其他地方关闭菜单
+        // 导入/导出菜单点击事件 - 显示/隐藏子菜单
+        document.getElementById('bl-data-menu').addEventListener('click', (e) => {
+            e.stopPropagation();
+            const refreshMenu = document.getElementById('bl-refresh-menu');
+            const dataMenu = document.getElementById('bl-data-submenu');
+            
+            // 关闭其他菜单
+            if (refreshMenu) {
+                refreshMenu.style.display = 'none';
+            }
+            
+            // 切换当前菜单
+            dataMenu.style.display = dataMenu.style.display === 'none' ? 'block' : 'none';
+        });
+
+        // 点击页面其他地方关闭所有菜单
         document.addEventListener('click', () => {
-            const menu = document.getElementById('bl-refresh-menu');
-            if (menu) {
-                menu.style.display = 'none';
+            const refreshMenu = document.getElementById('bl-refresh-menu');
+            const dataMenu = document.getElementById('bl-data-submenu');
+            
+            if (refreshMenu) {
+                refreshMenu.style.display = 'none';
+            }
+            if (dataMenu) {
+                dataMenu.style.display = 'none';
             }
         });
 
@@ -1808,13 +1836,6 @@
                 const menu = document.getElementById('bl-refresh-menu');
                 menu.style.display = 'none';
             }
-        });
-
-        // 导入/导出菜单点击事件 - 显示/隐藏子菜单
-        document.getElementById('bl-data-menu').addEventListener('click', (e) => {
-            e.stopPropagation();
-            const menu = document.getElementById('bl-data-submenu');
-            menu.style.display = menu.style.display === 'none' ? 'block' : 'none';
         });
 
         // 子选项点击事件
