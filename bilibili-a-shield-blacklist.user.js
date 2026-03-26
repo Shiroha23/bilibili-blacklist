@@ -11,6 +11,8 @@
 // @grant        GM_getValue
 // @grant        GM_notification
 // @connect      listing.ssrv2.ltd
+// @connect      gcore.jsdelivr.net
+// @connect      raw.githubusercontent.com
 // @run-at       document-end
 // ==/UserScript==
 
@@ -173,7 +175,102 @@
     /** 详细日志记录 */
     let blockDetailsLog = [];
     /** 最大日志条数 */
-    const MAX_LOG_ENTRIES = 2026;
+    const MAX_LOG_ENTRIES = 11037;
+    /** XianLists UID集合 */
+    let xianJunUids = new Set();
+    /** 是否为XianLists检测完成 */
+    let xianJunCheckComplete = false;
+    
+    /** 加载XianLists列表 */
+    async function loadXianJunList() {
+        try {
+            const response = await fetch('https://gcore.jsdelivr.net/gh/Darknights1750/XianLists@main/xianLists.json');
+            const data = await response.json();
+            
+            xianJunUids.clear();
+            const allXianJunUids = [
+                ...(data.xianList || []),
+                ...(data.xianLv1List || []),
+                ...(data.xianLv2List || []),
+                ...(data.xianLv3List || [])
+            ];
+            
+            for (const uid of allXianJunUids) {
+                xianJunUids.add(String(uid));
+            }
+            
+            console.log(`✅ XianLists列表加载完成，共 ${xianJunUids.size} 条`);
+            return allXianJunUids;
+        } catch (error) {
+            console.warn('⚠️ 加载XianLists列表失败:', error);
+            return null;
+        }
+        
+        xianJunCheckComplete = true;
+    }
+    
+    /** 检查当前用户是否为XianLists */
+    function isCurrentUserXianJun() {
+        const currentUid = getCurrentUid();
+        if (!currentUid) {
+            return false;
+        }
+        return xianJunUids.has(currentUid);
+    }
+    
+    /** 加载直播间机器人列表 */
+    async function loadLiveRoomRobotList() {
+        try {
+            const response = await fetch('https://raw.githubusercontent.com/Shiroha23/bilibili-a-shield-blacklist/main/bilibili-live-room-robot-blacklist-uids/bilibili-live-room-robot-blacklist-uids.txt');
+            const text = await response.text();
+            
+            const uids = [];
+            const lines = text.split('\n');
+            
+            for (let line of lines) {
+                line = line.trim();
+                if (line && !line.startsWith('#')) {
+                    const uid = parseInt(line, 10);
+                    if (!isNaN(uid) && uid > 0) {
+                        uids.push(uid);
+                    }
+                }
+            }
+            
+            console.log(`✅ 直播间机器人列表加载完成，共 ${uids.length} 条`);
+            return uids;
+        } catch (error) {
+            console.warn('⚠️ 加载直播间机器人列表失败:', error);
+            return null;
+        }
+    }
+    
+    /** 加载备用A盾黑名单列表 */
+    async function loadBackupAShieldBlacklist() {
+        try {
+            const response = await fetch('https://raw.githubusercontent.com/Shiroha23/bilibili-a-shield-blacklist/main/bilibili-a-shield-blacklist-uids/bilibili-a-shield-blacklist-uids.txt');
+            const text = await response.text();
+            
+            const uids = [];
+            const lines = text.split('\n');
+            
+            for (let line of lines) {
+                line = line.trim();
+                if (line && !line.startsWith('#')) {
+                    const uid = parseInt(line, 10);
+                    if (!isNaN(uid) && uid > 0) {
+                        uids.push(uid);
+                    }
+                }
+            }
+            
+            console.log(`✅ 备用A盾黑名单列表加载完成，共 ${uids.length} 条`);
+            return uids;
+        } catch (error) {
+            console.warn('⚠️ 加载备用A盾黑名单列表失败:', error);
+            return null;
+        }
+    }
     
     /** 更新状态显示 */
     function updateStatusDisplay() {
@@ -1440,6 +1537,12 @@
                         <button id="bl-refresh-remote" style="padding: 8px 12px; width: 100%; text-align: left; background: none; border: none; cursor: pointer; font-size: 13px; transition: background 0.2s;">
                             🛡️ A盾黑名单
                         </button>
+                        <button id="bl-refresh-xianlists" style="padding: 8px 12px; width: 100%; text-align: left; background: none; border: none; cursor: pointer; font-size: 13px; transition: background 0.2s;">
+                            👹 XianLists
+                        </button>
+                        <button id="bl-refresh-live-robot" style="padding: 8px 12px; width: 100%; text-align: left; background: none; border: none; cursor: pointer; font-size: 13px; transition: background 0.2s;">
+                            🤖 直播间机器人
+                        </button>
                         <button id="bl-refresh-cache" style="padding: 8px 12px; width: 100%; text-align: left; background: none; border: none; cursor: pointer; font-size: 13px; transition: background 0.2s;">
                             💾 本地缓存
                         </button>
@@ -1555,7 +1658,13 @@
             
             try {
                 console.log('🔄 正在从 listing.ssrv2.ltd API 获取黑名单数据...');
-                const uids = await fetchAllUidsFromPublicApi();
+                let uids = await fetchAllUidsFromPublicApi();
+                
+                // 主API失败，尝试备用源
+                if (!uids || uids.length === 0) {
+                    console.log('⚠️ 主API失败，尝试备用源...');
+                    uids = await loadBackupAShieldBlacklist();
+                }
                 
                 if (uids && uids.length > 0) {
                     BLACKLIST_UIDS = uids;
@@ -1619,6 +1728,80 @@
             
             const menu = document.getElementById('bl-refresh-menu');
             menu.style.display = 'none';
+        });
+
+        document.getElementById('bl-refresh-xianlists').addEventListener('click', async (e) => {
+            e.stopPropagation();
+            
+            const btn = document.getElementById('bl-refresh-data');
+            const originalText = btn.innerHTML;
+            btn.innerHTML = '⌛ 刷新中...';
+            btn.disabled = true;
+            
+            try {
+                console.log('🔄 正在从 XianLists 获取黑名单数据...');
+                const uids = await loadXianJunList();
+                
+                if (uids && uids.length > 0) {
+                    BLACKLIST_UIDS = uids;
+                    DATA_SOURCE = 'XianLists';
+                    batchBlockFinished = false;
+                    saveBlacklistCache(uids);
+                    clearProgress();
+                    console.log(`✅ 成功获取 ${uids.length} 条黑名单数据`);
+                    
+                    panel.remove();
+                    createControlPanel();
+                    showNotification('数据刷新', `✅ 成功从 XianLists 获取\n${uids.length} 条数据`);
+                } else {
+                    throw new Error('未找到UID数据');
+                }
+            } catch (error) {
+                console.warn('⚠️ 从XianLists获取黑名单失败:', error);
+                showNotification('数据刷新失败', `❌ 从XianLists获取数据失败: ${error.message}`);
+            } finally {
+                btn.innerHTML = originalText;
+                btn.disabled = false;
+                const menu = document.getElementById('bl-refresh-menu');
+                menu.style.display = 'none';
+            }
+        });
+
+        document.getElementById('bl-refresh-live-robot').addEventListener('click', async (e) => {
+            e.stopPropagation();
+            
+            const btn = document.getElementById('bl-refresh-data');
+            const originalText = btn.innerHTML;
+            btn.innerHTML = '⌛ 刷新中...';
+            btn.disabled = true;
+            
+            try {
+                console.log('🔄 正在从 直播间机器人 获取黑名单数据...');
+                const uids = await loadLiveRoomRobotList();
+                
+                if (uids && uids.length > 0) {
+                    BLACKLIST_UIDS = uids;
+                    DATA_SOURCE = '直播间机器人';
+                    batchBlockFinished = false;
+                    saveBlacklistCache(uids);
+                    clearProgress();
+                    console.log(`✅ 成功获取 ${uids.length} 条黑名单数据`);
+                    
+                    panel.remove();
+                    createControlPanel();
+                    showNotification('数据刷新', `✅ 成功从 直播间机器人 获取\n${uids.length} 条数据`);
+                } else {
+                    throw new Error('未找到UID数据');
+                }
+            } catch (error) {
+                console.warn('⚠️ 从直播间机器人获取黑名单失败:', error);
+                showNotification('数据刷新失败', `❌ 从直播间机器人获取数据失败: ${error.message}`);
+            } finally {
+                btn.innerHTML = originalText;
+                btn.disabled = false;
+                const menu = document.getElementById('bl-refresh-menu');
+                menu.style.display = 'none';
+            }
         });
 
         // 导入/导出菜单点击事件 - 显示/隐藏子菜单
@@ -1832,6 +2015,15 @@
 
     async function init() {
         console.log('🛡️ B站A盾黑名单拉黑助手已加载');
+
+        // 先加载XianLists列表
+        await loadXianJunList();
+        
+        // 检查当前用户是否为XianLists
+        if (isCurrentUserXianJun()) {
+            console.log('检测到XianLists成分，禁止使用脚本');
+            return;
+        }
 
         // 检查是否已同意免责声明
         if (!hasAgreedToDisclaimer()) {
