@@ -225,14 +225,20 @@
             const text = await response.text();
             
             const uids = [];
+            const seen = new Set();
             const lines = text.split('\n');
+            const uidPattern = /space\.bilibili\.com\/(\d+)/;
             
             for (let line of lines) {
                 line = line.trim();
                 if (line && !line.startsWith('#')) {
-                    const uid = parseInt(line, 10);
-                    if (!isNaN(uid) && uid > 0) {
-                        uids.push(uid);
+                    const match = uidPattern.exec(line);
+                    if (match) {
+                        const uid = parseInt(match[1], 10);
+                        if (!isNaN(uid) && uid > 0 && !seen.has(uid)) {
+                            seen.add(uid);
+                            uids.push(uid);
+                        }
                     }
                 }
             }
