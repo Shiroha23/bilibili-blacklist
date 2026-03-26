@@ -4,9 +4,7 @@
 // @version      1.5
 // @description  自动将A盾黑名单中的用户添加到B站黑名单，支持从 listing.ssrv2.ltd 动态获取数据
 // @author       Shiroha23
-// @match        https://space.bilibili.com/*
 // @match        https://www.bilibili.com/*
-// @match        https://listing.ssrv2.ltd/*
 // @grant        GM_xmlhttpRequest
 // @grant        GM_registerMenuCommand
 // @grant        GM_setValue
@@ -1699,155 +1697,70 @@
         document.body.appendChild(btn);
     }
 
-    // ==================== listing.ssrv2.ltd 专用功能 ====================
 
-    /**
-     * 检查是否在 listing.ssrv2.ltd 页面
-     */
-    function isListingSite() {
-        return window.location.hostname === 'listing.ssrv2.ltd';
-    }
-
-    /**
-     * 从当前页面提取 UID
-     */
-    function extractUidsFromPage() {
-        const html = document.documentElement.innerHTML;
-        return parseUidsFromHtml(html);
-    }
-
-    /**
-     * 创建 listing.ssrv2.ltd 页面的控制面板
-     */
-    function createListingPanel() {
-        const panel = document.createElement('div');
-        panel.id = 'bilibili-blacklist-listing-panel';
-        panel.style.cssText = `
-            position: fixed;
-            top: 20px;
-            right: 20px;
-            background: white;
-            border-radius: 12px;
-            box-shadow: 0 4px 20px rgba(0,0,0,0.15);
-            padding: 20px;
-            z-index: 99999;
-            font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
-            width: 320px;
-            border: 1px solid #e3e5e7;
-        `;
-
-        const currentUids = extractUidsFromPage();
-
-        panel.innerHTML = `
-            <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 15px;">
-                <h3 style="margin: 0; font-size: 16px; color: #18191c;">🛡️ B站A盾黑名单拉黑助手</h3>
-                <button id="bl-listing-close" style="background: none; border: none; cursor: pointer; font-size: 18px; color: #9499a0;">×</button>
-            </div>
-            <div style="margin-bottom: 15px; padding: 10px; background: #f6f7f8; border-radius: 8px; font-size: 13px; color: #61666d;">
-                <div>当前页面 UID 数量: <strong id="bl-listing-uid-count" style="color: #00a1d6;">${currentUids.length}</strong></div>
-            </div>
-            <div style="display: flex; flex-direction: column; gap: 8px;">
-                <button id="bl-import-from-page" style="padding: 10px; background: #00a1d6; color: white; border: none; border-radius: 6px; cursor: pointer; font-size: 14px; font-weight: 500; transition: background 0.2s;">
-                    📥 从当前页面导入黑名单
-                </button>
-                <button id="bl-go-to-bilibili" style="padding: 10px; background: #52c41a; color: white; border: none; border-radius: 6px; cursor: pointer; font-size: 14px; font-weight: 500; transition: background 0.2s;">
-                    🚀 前往 B站 进行拉黑
-                </button>
-            </div>
-        `;
-
-        document.body.appendChild(panel);
-
-        document.getElementById('bl-listing-close').addEventListener('click', () => {
-            panel.remove();
-        });
-
-        document.getElementById('bl-import-from-page').addEventListener('click', () => {
-            const uids = extractUidsFromPage();
-            if (uids.length > 0) {
-                BLACKLIST_UIDS = uids;
-                DATA_SOURCE = '当前页面';
-                saveBlacklistCache(uids);
-                showNotification('导入成功', `已从当前页面导入 ${uids.length} 条黑名单数据`);
-                const countEl = document.getElementById('bl-listing-uid-count');
-                if (countEl) countEl.textContent = String(uids.length);
-            } else {
-                showNotification('导入失败', '当前页面未找到任何 UID');
-            }
-        });
-
-        document.getElementById('bl-go-to-bilibili').addEventListener('click', () => {
-            window.open('https://www.bilibili.com/', '_blank');
-        });
-    }
 
     // ==================== 初始化 ====================
 
     async function init() {
         console.log('🛡️ B站A盾黑名单拉黑助手已加载');
 
-        if (isListingSite()) {
-            console.log('📍 检测到 listing.ssrv2.ltd 页面，启用导入功能');
-            createListingPanel();
+        // 优先使用本地缓存数据，不从远程自动获取
+        const cached = getBlacklistCache();
+        if (cached && cached.length > 0) {
+            BLACKLIST_UIDS = cached;
+            DATA_SOURCE = '本地缓存';
+            console.log(`📋 使用本地缓存数据: ${cached.length} 条`);
         } else {
-            // 优先使用本地缓存数据，不从远程自动获取
-            const cached = getBlacklistCache();
-            if (cached && cached.length > 0) {
-                BLACKLIST_UIDS = cached;
-                DATA_SOURCE = '本地缓存';
-                console.log(`📋 使用本地缓存数据: ${cached.length} 条`);
-            } else {
-                // 使用内置备用数据
-                BLACKLIST_UIDS = FALLBACK_UIDS;
-                DATA_SOURCE = '备用数据';
-                console.log(`⚠️ 使用内置备用数据: ${FALLBACK_UIDS.length} 条`);
-            }
+            // 使用内置备用数据
+            BLACKLIST_UIDS = FALLBACK_UIDS;
+            DATA_SOURCE = '备用数据';
+            console.log(`⚠️ 使用内置备用数据: ${FALLBACK_UIDS.length} 条`);
+        }
 
-            // 创建悬浮按钮
-            createFloatingButton();
+        // 创建悬浮按钮
+        createFloatingButton();
 
-            // 注册油猴菜单命令
-            if (typeof GM_registerMenuCommand !== 'undefined') {
-                GM_registerMenuCommand('🛡️ 打开B站A盾黑名单拉黑助手', () => {
-                    const panel = document.getElementById('bilibili-blacklist-panel');
-                    if (panel) {
-                        panel.remove();
-                        createFloatingButton();
-                    } else {
-                        const btn = document.getElementById('bilibili-blacklist-btn');
-                        if (btn) btn.remove();
-                        createControlPanel();
-                    }
-                });
+        // 注册油猴菜单命令
+        if (typeof GM_registerMenuCommand !== 'undefined') {
+            GM_registerMenuCommand('🛡️ 打开B站A盾黑名单拉黑助手', () => {
+                const panel = document.getElementById('bilibili-blacklist-panel');
+                if (panel) {
+                    panel.remove();
+                    createFloatingButton();
+                } else {
+                    const btn = document.getElementById('bilibili-blacklist-btn');
+                    if (btn) btn.remove();
+                    createControlPanel();
+                }
+            });
 
-                GM_registerMenuCommand('▶️ 开始批量拉黑', () => {
-                    if (!isLoggedIn()) {
-                        alert('请先登录B站账号！');
-                        return;
-                    }
-                    const startIndex = getProgress();
-                    batchBlock(startIndex);
-                });
+            GM_registerMenuCommand('▶️ 开始批量拉黑', () => {
+                if (!isLoggedIn()) {
+                    alert('请先登录B站账号！');
+                    return;
+                }
+                const startIndex = getProgress();
+                batchBlock(startIndex);
+            });
 
-                GM_registerMenuCommand('🔄 重置进度', () => {
-                    if (confirm('确定要重置进度吗？')) {
-                        clearProgress();
-                        alert('进度已重置！');
-                    }
-                });
+            GM_registerMenuCommand('🔄 重置进度', () => {
+                if (confirm('确定要重置进度吗？')) {
+                    clearProgress();
+                    alert('进度已重置！');
+                }
+            });
 
-                GM_registerMenuCommand('📤 导出 UID 列表', () => {
-                    exportBlacklistUids();
-                });
+            GM_registerMenuCommand('📤 导出 UID 列表', () => {
+                exportBlacklistUids();
+            });
 
-                GM_registerMenuCommand('📥 导入 UID 列表', () => {
-                    showImportUidDialog();
-                });
+            GM_registerMenuCommand('📥 导入 UID 列表', () => {
+                showImportUidDialog();
+            });
 
-                GM_registerMenuCommand('🧾 导出我的B站黑名单', async () => {
-                    await exportMyBilibiliBlacklist();
-                });
-            }
+            GM_registerMenuCommand('🧾 导出我的B站黑名单', async () => {
+                await exportMyBilibiliBlacklist();
+            });
         }
     }
 

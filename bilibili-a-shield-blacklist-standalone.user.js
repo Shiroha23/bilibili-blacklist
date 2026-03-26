@@ -4,7 +4,6 @@
 // @version      1.3-standalone
 // @description  自动将A盾黑名单中的用户添加到B站黑名单，仅使用脚本内置 UID 列表，不访问任何外部公示站
 // @author       Shiroha23
-// @match        https://space.bilibili.com/*
 // @match        https://www.bilibili.com/*
 // @grant        GM_registerMenuCommand
 // @grant        GM_setValue
