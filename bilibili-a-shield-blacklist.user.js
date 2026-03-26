@@ -1707,10 +1707,131 @@
 
 
 
+    // ==================== 免责声明 ====================
+
+    function showDisclaimer() {
+        const overlay = document.createElement('div');
+        overlay.id = 'bilibili-blacklist-disclaimer';
+        overlay.style.cssText = `
+            position: fixed;
+            inset: 0;
+            z-index: 100001;
+            background: rgba(0,0,0,0.6);
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            padding: 20px;
+            box-sizing: border-box;
+        `;
+
+        const box = document.createElement('div');
+        box.style.cssText = `
+            background: #fff;
+            border-radius: 12px;
+            box-shadow: 0 8px 32px rgba(0,0,0,0.3);
+            width: 100%;
+            max-width: 500px;
+            max-height: 80vh;
+            display: flex;
+            flex-direction: column;
+            font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
+        `;
+
+        const titleRow = document.createElement('div');
+        titleRow.style.cssText = 'padding: 20px 20px 10px; border-bottom: 1px solid #e3e5e7; background: #f6f7f8; border-radius: 12px 12px 0 0;';
+        const h3 = document.createElement('h3');
+        h3.style.cssText = 'margin: 0; font-size: 16px; color: #18191c; text-align: center;';
+        h3.textContent = '⚠️ 免责声明';
+        titleRow.appendChild(h3);
+
+        const content = document.createElement('div');
+        content.style.cssText = 'padding: 20px; overflow-y: auto; flex: 1;';
+        content.innerHTML = `
+            <div style="font-size: 14px; line-height: 1.6; color: #333;">
+                <p>本脚本仅用于辅助管理 B 站黑名单，请勿用于任何违法或滥用目的。</p>
+                <p>使用本脚本时，请遵守以下规则：</p>
+                <ol style="margin: 10px 0; padding-left: 20px;">
+                    <li>请勿频繁操作，以免触发 B 站风控机制</li>
+                    <li>仅拉黑确实需要拉黑的用户，避免误操作</li>
+                    <li>尊重他人合法权益，不进行恶意拉黑</li>
+                    <li>使用本脚本产生的一切后果由用户自行承担</li>
+                </ol>
+                <p>请确认您已了解并同意上述声明，否则请不要使用本脚本。</p>
+            </div>
+        `;
+
+        const btnRow = document.createElement('div');
+        btnRow.style.cssText = 'display: flex; gap: 10px; padding: 15px 20px; border-top: 1px solid #e3e5e7; background: #fafbfc; border-radius: 0 0 12px 12px;';
+
+        const cancelBtn = document.createElement('button');
+        cancelBtn.type = 'button';
+        cancelBtn.textContent = '不同意';
+        cancelBtn.style.cssText = 'flex: 1; padding: 10px; background: #f6f7f8; color: #61666d; border: 1px solid #e3e5e7; border-radius: 6px; cursor: pointer; font-size: 14px;';
+
+        const agreeBtn = document.createElement('button');
+        agreeBtn.type = 'button';
+        agreeBtn.textContent = '我同意';
+        agreeBtn.style.cssText = 'flex: 1; padding: 10px; background: #00a1d6; color: white; border: none; border-radius: 6px; cursor: pointer; font-size: 14px; font-weight: 500;';
+
+        btnRow.appendChild(cancelBtn);
+        btnRow.appendChild(agreeBtn);
+
+        box.appendChild(titleRow);
+        box.appendChild(content);
+        box.appendChild(btnRow);
+        overlay.appendChild(box);
+        document.body.appendChild(overlay);
+
+        return new Promise((resolve) => {
+            cancelBtn.addEventListener('click', () => {
+                overlay.remove();
+                resolve(false);
+            });
+
+            agreeBtn.addEventListener('click', () => {
+                overlay.remove();
+                // 保存同意状态
+                if (typeof GM_setValue !== 'undefined') {
+                    GM_setValue('bilibili_blacklist_disclaimer_agreed', 'true');
+                }
+                localStorage.setItem('bilibili_blacklist_disclaimer_agreed', 'true');
+                resolve(true);
+            });
+
+            // 点击遮罩关闭
+            overlay.addEventListener('click', (e) => {
+                if (e.target === overlay) {
+                    overlay.remove();
+                    resolve(false);
+                }
+            });
+        });
+    }
+
+    function hasAgreedToDisclaimer() {
+        if (typeof GM_getValue !== 'undefined') {
+            const agreed = GM_getValue('bilibili_blacklist_disclaimer_agreed');
+            if (agreed === 'true') {
+                return true;
+            }
+        }
+        const agreed = localStorage.getItem('bilibili_blacklist_disclaimer_agreed');
+        return agreed === 'true';
+    }
+
     // ==================== 初始化 ====================
 
     async function init() {
         console.log('🛡️ B站A盾黑名单拉黑助手已加载');
+
+        // 检查是否已同意免责声明
+        if (!hasAgreedToDisclaimer()) {
+            const agreed = await showDisclaimer();
+            if (!agreed) {
+                console.log('用户不同意免责声明，脚本将不加载');
+                return;
+            }
+        }
 
         // 优先使用本地缓存数据，不从远程自动获取
         const cached = getBlacklistCache();
