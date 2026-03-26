@@ -180,12 +180,14 @@
     let xianJunUids = new Set();
     /** 是否为XianLists检测完成 */
     let xianJunCheckComplete = false;
+    /** 是否已绑定全局菜单关闭监听 */
+    let globalMenuCloseHandlerBound = false;
     
     /** 加载XianLists列表 */
     async function loadXianJunList() {
         try {
-            const response = await fetch('https://gcore.jsdelivr.net/gh/Darknights1750/XianLists@main/xianLists.json');
-            const data = await response.json();
+            const text = await fetchText('https://gcore.jsdelivr.net/gh/Darknights1750/XianLists@main/xianLists.json');
+            const data = JSON.parse(text);
             
             xianJunUids.clear();
             const allXianJunUids = [
@@ -200,13 +202,13 @@
             }
             
             console.log(`✅ XianLists列表加载完成，共 ${xianJunUids.size} 条`);
-            return allXianJunUids;
+            return Array.from(xianJunUids, uid => parseInt(uid, 10)).filter(uid => Number.isFinite(uid) && uid > 0);
         } catch (error) {
             console.warn('⚠️ 加载XianLists列表失败:', error);
             return null;
+        } finally {
+            xianJunCheckComplete = true;
         }
-        
-        xianJunCheckComplete = true;
     }
     
     /** 检查当前用户是否为XianLists */
@@ -221,8 +223,7 @@
     /** 加载直播间机器人列表 */
     async function loadLiveRoomRobotList() {
         try {
-            const response = await fetch('https://raw.githubusercontent.com/Shiroha23/bilibili-a-shield-blacklist/main/bilibili-live-room-robot-blacklist-uids/bilibili-live-room-robot-blacklist-uids.txt');
-            const text = await response.text();
+            const text = await fetchText('https://raw.githubusercontent.com/Shiroha23/bilibili-a-shield-blacklist/main/bilibili-live-room-robot-blacklist-uids/bilibili-live-room-robot-blacklist-uids.txt');
             
             const uids = [];
             const seen = new Set();
@@ -254,8 +255,7 @@
     /** 加载备用A盾黑名单列表 */
     async function loadBackupAShieldBlacklist() {
         try {
-            const response = await fetch('https://raw.githubusercontent.com/Shiroha23/bilibili-a-shield-blacklist/main/bilibili-a-shield-blacklist-uids/bilibili-a-shield-blacklist-uids.txt');
-            const text = await response.text();
+            const text = await fetchText('https://raw.githubusercontent.com/Shiroha23/bilibili-a-shield-blacklist/main/bilibili-a-shield-blacklist-uids/bilibili-a-shield-blacklist-uids.txt');
             
             const uids = [];
             const lines = text.split('\n');
@@ -305,6 +305,8 @@
      * 加载我的黑名单（用于快速检查）
      */
     async function loadMyBlacklist() {
+        myBlacklistUids.clear();
+
         if (!isLoggedIn()) {
             console.log('未登录，无法加载我的黑名单');
             return;
@@ -313,8 +315,7 @@
         try {
             console.log('🔄 正在加载我的黑名单...');
             const records = await fetchAllMyBilibiliBlacks();
-            
-            myBlacklistUids.clear();
+
             for (const item of records) {
                 myBlacklistUids.add(item.uid);
             }
@@ -1658,17 +1659,20 @@
         });
 
         // 点击页面其他地方关闭所有菜单
-        document.addEventListener('click', () => {
-            const refreshMenu = document.getElementById('bl-refresh-menu');
-            const dataMenu = document.getElementById('bl-data-submenu');
-            
-            if (refreshMenu) {
-                refreshMenu.style.display = 'none';
-            }
-            if (dataMenu) {
-                dataMenu.style.display = 'none';
-            }
-        });
+        if (!globalMenuCloseHandlerBound) {
+            document.addEventListener('click', () => {
+                const refreshMenu = document.getElementById('bl-refresh-menu');
+                const dataMenu = document.getElementById('bl-data-submenu');
+                
+                if (refreshMenu) {
+                    refreshMenu.style.display = 'none';
+                }
+                if (dataMenu) {
+                    dataMenu.style.display = 'none';
+                }
+            });
+            globalMenuCloseHandlerBound = true;
+        }
 
         // 子选项点击事件
         document.getElementById('bl-refresh-remote').addEventListener('click', async (e) => {
