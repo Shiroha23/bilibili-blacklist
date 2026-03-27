@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         B站A盾黑名单拉黑助手
 // @namespace    http://tampermonkey.net/
-// @version      1.6
+// @version      1.7
 // @description  自动将A盾黑名单中的用户添加到B站黑名单，支持从 listing.ssrv2.ltd 动态获取数据
 // @author       Shiroha23
 // @match        https://www.bilibili.com/*
@@ -351,6 +351,18 @@
         const skippedEl = document.getElementById('bl-skipped-count');
         if (skippedEl) {
             skippedEl.textContent = String(skippedCount);
+        }
+    }
+
+    /**
+     * 更新进度显示
+     */
+    function updateProgressDisplay() {
+        const progressEl = document.getElementById('bl-progress-display');
+        if (progressEl) {
+            const progress = getProgress();
+            const total = BLACKLIST_UIDS.length;
+            progressEl.innerHTML = `当前进度: <strong style="color: #00a1d6;">${progress}</strong> / ${total}`;
         }
     }
 
@@ -810,6 +822,8 @@
                     
                     // 保存进度
                     saveProgress(i + 1);
+                    // 更新进度显示
+                    updateProgressDisplay();
                     
                     // 显示进度通知
                     if ((i + 1) % CONFIG.BATCH_SIZE === 0 || i === total - 1) {
@@ -861,6 +875,8 @@
 
                 // 保存进度
                 saveProgress(i + 1);
+                // 更新进度显示
+                updateProgressDisplay();
 
                 // 显示进度通知
                 if ((i + 1) % CONFIG.BATCH_SIZE === 0 || i === total - 1) {
@@ -1561,7 +1577,7 @@
             </div>
             <div style="margin-bottom: 15px; padding: 10px; background: #f6f7f8; border-radius: 8px; font-size: 13px; color: #61666d;">
                 <div>黑名单总数: <strong style="color: #18191c;">${total}</strong></div>
-                <div>当前进度: <strong style="color: #00a1d6;">${progress}</strong> / ${total}</div>
+                <div id="bl-progress-display">当前进度: <strong style="color: #00a1d6;">${progress}</strong> / ${total}</div>
                 <div>数据来源: <strong style="color: #18191c;">${DATA_SOURCE}</strong></div>
                 <div>登录状态: <strong style="color: ${isLoggedIn() ? '#00aeec' : '#f25d8e'};">${isLoggedIn() ? '已登录' : '未登录'}</strong></div>
                 <div>当前状态: <strong id="bl-current-status" style="color: ${batchBlockPaused ? '#faad14' : batchBlockRunning ? '#52c41a' : batchBlockFinished ? '#13c2c2' : '#9499a0'};">${batchBlockPaused ? '已暂停' : batchBlockRunning ? '运行中' : batchBlockFinished ? '已完成' : '待运行'}</strong></div>

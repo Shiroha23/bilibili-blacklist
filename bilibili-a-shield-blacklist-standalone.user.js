@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         B站A盾黑名单拉黑助手（简易版）
 // @namespace    http://tampermonkey.net/
-// @version      1.4-standalone
+// @version      1.5-standalone
 // @description  自动将A盾黑名单中的用户添加到B站黑名单，支持从 GitHub 备用源更新数据
 // @author       Shiroha23
 // @match        https://www.bilibili.com/*
@@ -233,6 +233,18 @@
             
             statusEl.textContent = statusText;
             statusEl.style.color = statusColor;
+        }
+    }
+
+    /**
+     * 更新进度显示
+     */
+    function updateProgressDisplay() {
+        const progressEl = document.getElementById('bl-progress-display');
+        if (progressEl) {
+            const progress = getProgress();
+            const total = BLACKLIST_UIDS.length;
+            progressEl.innerHTML = `当前进度: <strong style="color: #00a1d6;">${progress}</strong> / ${total}`;
         }
     }
 
@@ -526,6 +538,8 @@
                     });
                     
                     saveProgress(i + 1);
+                    // 更新进度显示
+                    updateProgressDisplay();
                     
                     if ((i + 1) % CONFIG.BATCH_SIZE === 0 || i === total - 1) {
                         showNotification(
@@ -572,6 +586,8 @@
                 }
 
                 saveProgress(i + 1);
+                // 更新进度显示
+                updateProgressDisplay();
 
                 if ((i + 1) % CONFIG.BATCH_SIZE === 0 || i === total - 1) {
                     showNotification(
@@ -1156,7 +1172,7 @@
             </div>
             <div style="margin-bottom: 15px; padding: 10px; background: #f6f7f8; border-radius: 8px; font-size: 13px; color: #61666d;">
                 <div>黑名单总数: <strong style="color: #18191c;">${total}</strong></div>
-                <div>当前进度: <strong style="color: #00a1d6;">${progress}</strong> / ${total}</div>
+                <div id="bl-progress-display">当前进度: <strong style="color: #00a1d6;">${progress}</strong> / ${total}</div>
                 <div>数据来源: <strong style="color: #18191c;">${DATA_SOURCE}</strong></div>
                 <div>登录状态: <strong style="color: ${isLoggedIn() ? '#00aeec' : '#f25d8e'};">${isLoggedIn() ? '已登录' : '未登录'}</strong></div>
                 <div>当前状态: <strong id="bl-current-status" style="color: #9499a0;">待运行</strong></div>
