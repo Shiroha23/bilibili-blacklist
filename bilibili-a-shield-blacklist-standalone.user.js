@@ -145,7 +145,9 @@
     let batchBlockFinished = false;
     let myBlacklistUids = new Set();
     let blockDetailsLog = [];
+    let skippedCount = 0;
     const MAX_LOG_ENTRIES = 2026;
+    let panelOutsideClickHandler = null;
 
     function fetchText(url) {
         if (typeof GM_xmlhttpRequest !== 'undefined') {
@@ -214,7 +216,6 @@
         BLACKLIST_UIDS = FALLBACK_UIDS.slice();
         DATA_SOURCE = '内置列表';
         batchBlockFinished = false;
-        clearProgress();
     }
 
     /**
@@ -286,7 +287,7 @@
     async function loadMyBlacklist() {
         if (!isLoggedIn()) {
             console.log('未登录，无法加载我的黑名单');
-            return;
+            return false;
         }
         
         try {
@@ -299,16 +300,16 @@
             }
             
             console.log(`✅ 我的黑名单加载完成，共 ${myBlacklistUids.size} 个用户`);
+            return true;
         } catch (error) {
             console.warn('⚠️ 加载我的黑名单失败:', error);
+            return false;
         }
     }
 
     function isUserAlreadyBlocked(uid) {
         return myBlacklistUids.has(uid);
     }
-
-
 
     function addBlockLogEntry(entry) {
         const logEntry = {
@@ -354,9 +355,8 @@
         const seen = new Set();
         const out = [];
         let pn = 1;
-        let keepLoading = true;
 
-        while (keepLoading) {
+        while (true) {
             const url = 'https://api.bilibili.com/x/relation/blacks?' + new URLSearchParams({
                 pn: String(pn),
                 ps: String(ps)
@@ -395,7 +395,6 @@
                 break;
             }
             pn += 1;
-            keepLoading = pn <= 200;
         }
 
         return out;
@@ -529,11 +528,12 @@
 
         batchBlockRunning = true;
         batchBlockFinished = false;
+        skippedCount = 0;
         startIndex = normalizeBatchStartIndex(startIndex);
         const total = BLACKLIST_UIDS.length;
         let success = 0;
         let failed = 0;
-        let skipped = 0;
+        let canSkipAlreadyBlocked = false;
         
         const btn = document.getElementById('bl-control-batch');
         if (btn) {
@@ -545,7 +545,10 @@
 
         try {
             if (CONFIG.SKIP_ALREADY_BLOCKED) {
-                await loadMyBlacklist();
+                canSkipAlreadyBlocked = await loadMyBlacklist();
+                if (!canSkipAlreadyBlocked) {
+                    showNotification('跳过检测不可用', '未能读取你的B站黑名单，本轮将继续尝试拉黑并自动识别已存在项');
+                }
             }
             
             console.log(`🚀 开始批量拉黑，从第 ${startIndex + 1} 个用户开始，共 ${total} 个用户`);
@@ -560,9 +563,9 @@
                 
                 const uid = BLACKLIST_UIDS[i];
                 
-                if (CONFIG.SKIP_ALREADY_BLOCKED && isUserAlreadyBlocked(uid)) {
+                if (canSkipAlreadyBlocked && isUserAlreadyBlocked(uid)) {
                     console.log(`⏭️ 跳过已拉黑用户: ${uid}`);
-                    skipped++;
+                    skippedCount++;
                     
                     addBlockLogEntry({
                         uid: uid,
@@ -579,7 +582,7 @@
                     if ((i + 1) % CONFIG.BATCH_SIZE === 0 || i === total - 1) {
                         showNotification(
                             '批量拉黑进度',
-                            `已处理: ${i + 1}/${total}\n成功: ${success}  失败: ${failed}\n跳过: ${skipped}`
+                            `已处理: ${i + 1}/${total}\n成功: ${success}  失败: ${failed}\n跳过: ${skippedCount}`
                         );
                     }
                     continue;
@@ -597,7 +600,18 @@
                     };
                 }
 
-                if (blockResult.success) {
+                if (blockResult.code === -102) {
+                    skippedCount++;
+                    myBlacklistUids.add(uid);
+
+                    addBlockLogEntry({
+                        uid: uid,
+                        status: 'skipped',
+                        message: blockResult.message,
+                        index: i + 1,
+                        total: total
+                    });
+                } else if (blockResult.success) {
                     success++;
                     myBlacklistUids.add(uid);
                     
@@ -625,11 +639,11 @@
                 updateProgressDisplay();
 
                 if ((i + 1) % CONFIG.BATCH_SIZE === 0 || i === total - 1) {
-                    showNotification(
-                        '批量拉黑进度',
-                        `已处理: ${i + 1}/${total}\n成功: ${success}  失败: ${failed}\n跳过: ${skipped}`
-                    );
-                }
+                        showNotification(
+                            '批量拉黑进度',
+                            `已处理: ${i + 1}/${total}\n成功: ${success}  失败: ${failed}\n跳过: ${skippedCount}`
+                        );
+                    }
 
                 if (i < total - 1) {
                     await delay(CONFIG.USER_INTERVAL);
@@ -641,17 +655,17 @@
                 }
             }
 
-            console.log(`✅ 批量拉黑完成！成功: ${success}, 失败: ${failed}, 跳过: ${skipped}`);
+            console.log(`✅ 批量拉黑完成！成功: ${success}, 失败: ${failed}, 跳过: ${skippedCount}`);
             batchBlockFinished = true;
             // 批量拉黑完成时显示系统通知
             showNotification(
                 '批量拉黑完成',
-                `总计: ${total}\n成功: ${success}\n失败: ${failed}\n跳过: ${skipped}`,
+                `总计: ${total}\n成功: ${success}\n失败: ${failed}\n跳过: ${skippedCount}`,
                 true
             );
 
             // 完成后将进度设置为总数，显示为满的
-            if (success + failed + skipped === total) {
+            if (success + failed + skippedCount === total) {
                 saveProgress(total);
             }
         } finally {
@@ -761,6 +775,14 @@
         DATA_SOURCE = '用户导入';
         batchBlockFinished = false;
         clearProgress();
+    }
+
+    function ensureBatchNotRunning(actionLabel) {
+        if (!batchBlockRunning) {
+            return true;
+        }
+        showNotification('操作被阻止', `${actionLabel}前请先暂停或等待当前批量拉黑结束`);
+        return false;
     }
 
     function showDetailsPanel() {
@@ -944,18 +966,35 @@
                     skipped: '跳过',
                     error: '错误'
                 };
-                
-                row.innerHTML = `
-                    <td style="padding: 10px 16px; color: #61666d;">${entry.index}/${entry.total}</td>
-                    <td style="padding: 10px 16px; color: #61666d; font-size: 12px;">${entry.timestamp}</td>
-                    <td style="padding: 10px 16px; color: #18191c; font-family: monospace;">${entry.uid}</td>
-                    <td style="padding: 10px 16px;">
-                        <span style="display: inline-block; padding: 2px 8px; border-radius: 4px; font-size: 12px; background: ${statusColors[entry.status]}20; color: ${statusColors[entry.status]}; font-weight: 500;">
-                            ${statusLabels[entry.status]}
-                        </span>
-                    </td>
-                    <td style="padding: 10px 16px; color: #61666d; font-size: 12px;">${entry.message || '-'}</td>
-                `;
+
+                const indexCell = document.createElement('td');
+                indexCell.style.cssText = 'padding: 10px 16px; color: #61666d;';
+                indexCell.textContent = `${entry.index}/${entry.total}`;
+
+                const timeCell = document.createElement('td');
+                timeCell.style.cssText = 'padding: 10px 16px; color: #61666d; font-size: 12px;';
+                timeCell.textContent = entry.timestamp;
+
+                const uidCell = document.createElement('td');
+                uidCell.style.cssText = 'padding: 10px 16px; color: #18191c; font-family: monospace;';
+                uidCell.textContent = String(entry.uid);
+
+                const statusCell = document.createElement('td');
+                statusCell.style.cssText = 'padding: 10px 16px;';
+                const statusTag = document.createElement('span');
+                statusTag.style.cssText = `display: inline-block; padding: 2px 8px; border-radius: 4px; font-size: 12px; background: ${statusColors[entry.status]}20; color: ${statusColors[entry.status]}; font-weight: 500;`;
+                statusTag.textContent = statusLabels[entry.status] || entry.status;
+                statusCell.appendChild(statusTag);
+
+                const messageCell = document.createElement('td');
+                messageCell.style.cssText = 'padding: 10px 16px; color: #61666d; font-size: 12px;';
+                messageCell.textContent = entry.message || '-';
+
+                row.appendChild(indexCell);
+                row.appendChild(timeCell);
+                row.appendChild(uidCell);
+                row.appendChild(statusCell);
+                row.appendChild(messageCell);
                 tbody.appendChild(row);
             });
             table.appendChild(tbody);
@@ -1260,6 +1299,10 @@
 
         document.getElementById('bl-close-panel').addEventListener('click', () => {
             panel.remove();
+            if (panelOutsideClickHandler) {
+                document.removeEventListener('click', panelOutsideClickHandler);
+                panelOutsideClickHandler = null;
+            }
             createFloatingButton();
         });
 
@@ -1283,6 +1326,13 @@
         // 子选项点击事件 - A盾黑名单（备用源）
         document.getElementById('bl-refresh-remote').addEventListener('click', async (e) => {
             e.stopPropagation();
+            if (!ensureBatchNotRunning('刷新数据')) {
+                const menu = document.getElementById('bl-refresh-menu');
+                if (menu) {
+                    menu.style.display = 'none';
+                }
+                return;
+            }
             
             const btn = document.getElementById('bl-refresh-data');
             const originalText = btn.innerHTML;
@@ -1320,6 +1370,13 @@
         // 子选项点击事件 - 本地缓存
         document.getElementById('bl-refresh-cache').addEventListener('click', (e) => {
             e.stopPropagation();
+            if (!ensureBatchNotRunning('刷新数据')) {
+                const menu = document.getElementById('bl-refresh-menu');
+                if (menu) {
+                    menu.style.display = 'none';
+                }
+                return;
+            }
             const cached = getBlacklistCache();
             
             if (cached && cached.length > 0) {
@@ -1343,7 +1400,15 @@
         // 子选项点击事件 - 内置列表
         document.getElementById('bl-refresh-fallback').addEventListener('click', (e) => {
             e.stopPropagation();
+            if (!ensureBatchNotRunning('切换到内置列表')) {
+                const menu = document.getElementById('bl-refresh-menu');
+                if (menu) {
+                    menu.style.display = 'none';
+                }
+                return;
+            }
             loadEmbeddedBlacklist();
+            clearProgress();
             panel.remove();
             createControlPanel();
             showNotification('已重新载入', `当前内置列表共 ${BLACKLIST_UIDS.length} 条`);
@@ -1353,14 +1418,21 @@
         });
 
         // 点击页面其他地方关闭菜单
-        document.addEventListener('click', () => {
+        if (panelOutsideClickHandler) {
+            document.removeEventListener('click', panelOutsideClickHandler);
+        }
+        panelOutsideClickHandler = () => {
             const refreshMenu = document.getElementById('bl-refresh-menu');
             if (refreshMenu) {
                 refreshMenu.style.display = 'none';
             }
-        });
+        };
+        document.addEventListener('click', panelOutsideClickHandler);
 
         document.getElementById('bl-import-uids').addEventListener('click', () => {
+            if (!ensureBatchNotRunning('导入 UID')) {
+                return;
+            }
             showImportUidDialog();
         });
 
@@ -1575,6 +1647,10 @@
                 const panel = document.getElementById('bilibili-blacklist-panel');
                 if (panel) {
                     panel.remove();
+                    if (panelOutsideClickHandler) {
+                        document.removeEventListener('click', panelOutsideClickHandler);
+                        panelOutsideClickHandler = null;
+                    }
                     createFloatingButton();
                 } else {
                     const b = document.getElementById('bilibili-blacklist-btn');
@@ -1600,6 +1676,9 @@
             });
 
             GM_registerMenuCommand(' 导入 UID 列表', () => {
+                if (!ensureBatchNotRunning('导入 UID')) {
+                    return;
+                }
                 showImportUidDialog();
             });
         }

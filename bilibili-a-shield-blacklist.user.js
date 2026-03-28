@@ -189,11 +189,11 @@
             let text;
             try {
                 // 首先尝试主源
-                text = await fetchText('https://gcore.jsdelivr.net/gh/Darknights1750/XianLists@main/xianLists.json');
+                text = await fetchText('https://gcore.jsdelivr.net/gh/Darknights1750/XianLists@main/xianLists.json', 5000);
             } catch (primaryError) {
                 console.warn('⚠️ 主源加载失败，尝试备用源:', primaryError);
                 // 主源失败，使用备用源
-                text = await fetchText('https://raw.githubusercontent.com/Shiroha23/bilibili-a-shield-blacklist/main/bilibili-xianLists-uids/xianLists.json');
+                text = await fetchText('https://raw.githubusercontent.com/Shiroha23/bilibili-a-shield-blacklist/main/bilibili-xianLists-uids/xianLists.json', 5000);
             }
             
             const data = JSON.parse(text);
@@ -318,7 +318,7 @@
 
         if (!isLoggedIn()) {
             console.log('未登录，无法加载我的黑名单');
-            return;
+            return false;
         }
         
         try {
@@ -330,8 +330,10 @@
             }
             
             console.log(`✅ 我的黑名单加载完成，共 ${myBlacklistUids.size} 个用户`);
+            return true;
         } catch (error) {
             console.warn('⚠️ 加载我的黑名单失败:', error);
+            return false;
         }
     }
 
@@ -342,16 +344,6 @@
      */
     function isUserAlreadyBlocked(uid) {
         return myBlacklistUids.has(uid);
-    }
-
-    /**
-     * 更新跳过计数显示
-     */
-    function updateSkippedCountDisplay() {
-        const skippedEl = document.getElementById('bl-skipped-count');
-        if (skippedEl) {
-            skippedEl.textContent = String(skippedCount);
-        }
     }
 
     /**
@@ -421,14 +413,14 @@
     /**
      * 跨域拉取文本：优先 GM_xmlhttpRequest（不受页面 CORS 限制），否则回退 fetch
      */
-    function fetchText(url) {
+    function fetchText(url, timeout = 60000) {
         if (typeof GM_xmlhttpRequest !== 'undefined') {
             return new Promise((resolve, reject) => {
                 GM_xmlhttpRequest({
                     method: 'GET',
                     url: url,
                     headers: { 'Accept': 'application/json, text/html;q=0.9, */*;q=0.8' },
-                    timeout: 60000,
+                    timeout: timeout,
                     onload: function(response) {
                         if (response.status >= 200 && response.status < 300) {
                             resolve(response.responseText);
@@ -445,15 +437,32 @@
                 });
             });
         }
+        const controller = typeof AbortController !== 'undefined' ? new AbortController() : null;
+        let timeoutId = null;
+
+        if (controller) {
+            timeoutId = setTimeout(() => controller.abort(), timeout);
+        }
+
         return fetch(url, {
             mode: 'cors',
             credentials: 'omit',
-            headers: { 'Accept': 'application/json, text/html;q=0.9, */*;q=0.8' }
+            headers: { 'Accept': 'application/json, text/html;q=0.9, */*;q=0.8' },
+            signal: controller ? controller.signal : undefined
         }).then(function(r) {
             if (!r.ok) {
                 throw new Error(`HTTP ${r.status}`);
             }
             return r.text();
+        }).catch(function(error) {
+            if (error && error.name === 'AbortError') {
+                throw new Error('请求超时');
+            }
+            throw error;
+        }).finally(function() {
+            if (timeoutId !== null) {
+                clearTimeout(timeoutId);
+            }
         });
     }
 
@@ -774,6 +783,7 @@
         const total = BLACKLIST_UIDS.length;
         let success = 0;
         let failed = 0;
+        let canSkipAlreadyBlocked = false;
         
         // 更新按钮为暂停状态
         const btn = document.getElementById('bl-control-batch');
@@ -788,7 +798,10 @@
         try {
             // 如果启用跳过已拉黑用户，先加载我的黑名单
             if (CONFIG.SKIP_ALREADY_BLOCKED) {
-                await loadMyBlacklist();
+                canSkipAlreadyBlocked = await loadMyBlacklist();
+                if (!canSkipAlreadyBlocked) {
+                    showNotification('跳过检测不可用', '未能读取你的B站黑名单，本轮将继续尝试拉黑并自动识别已存在项');
+                }
             }
             
             console.log(`🚀 开始批量拉黑，从第 ${startIndex + 1} 个用户开始，共 ${total} 个用户`);
@@ -806,10 +819,9 @@
                 const uid = BLACKLIST_UIDS[i];
                 
                 // 检查是否需要跳过已拉黑的用户
-                if (CONFIG.SKIP_ALREADY_BLOCKED && isUserAlreadyBlocked(uid)) {
+                if (canSkipAlreadyBlocked && isUserAlreadyBlocked(uid)) {
                     console.log(`⏭️ 跳过已拉黑用户: ${uid}`);
                     skippedCount++;
-                    updateSkippedCountDisplay();
                     
                     // 记录跳过日志
                     addBlockLogEntry({
@@ -847,7 +859,18 @@
                     };
                 }
 
-                if (blockResult.success) {
+                if (blockResult.code === -102) {
+                    skippedCount++;
+                    myBlacklistUids.add(uid);
+
+                    addBlockLogEntry({
+                        uid: uid,
+                        status: 'skipped',
+                        message: blockResult.message,
+                        index: i + 1,
+                        total: total
+                    });
+                } else if (blockResult.success) {
                     success++;
                     // 成功拉黑后添加到本地集合，避免重复处理
                     myBlacklistUids.add(uid);
@@ -1069,9 +1092,8 @@
         const seen = new Set();
         const out = [];
         let pn = 1;
-        let keepLoading = true;
 
-        while (keepLoading) {
+        while (true) {
             const url = CONFIG.BILI_BLACKS_API_URL + '?' + new URLSearchParams({
                 pn: String(pn),
                 ps: String(ps)
@@ -1110,7 +1132,6 @@
                 break;
             }
             pn += 1;
-            keepLoading = pn <= 200;
         }
 
         return out;
@@ -1160,6 +1181,14 @@
         batchBlockFinished = false;
         saveBlacklistCache(uids);
         clearProgress();
+    }
+
+    function ensureBatchNotRunning(actionLabel) {
+        if (!batchBlockRunning) {
+            return true;
+        }
+        showNotification('操作被阻止', `${actionLabel}前请先暂停或等待当前批量拉黑结束`);
+        return false;
     }
 
     /**
@@ -1355,18 +1384,35 @@
                     skipped: '跳过',
                     error: '错误'
                 };
-                
-                row.innerHTML = `
-                    <td style="padding: 10px 16px; color: #61666d;">${entry.index}/${entry.total}</td>
-                    <td style="padding: 10px 16px; color: #61666d; font-size: 12px;">${entry.timestamp}</td>
-                    <td style="padding: 10px 16px; color: #18191c; font-family: monospace;">${entry.uid}</td>
-                    <td style="padding: 10px 16px;">
-                        <span style="display: inline-block; padding: 2px 8px; border-radius: 4px; font-size: 12px; background: ${statusColors[entry.status]}20; color: ${statusColors[entry.status]}; font-weight: 500;">
-                            ${statusLabels[entry.status]}
-                        </span>
-                    </td>
-                    <td style="padding: 10px 16px; color: #61666d; font-size: 12px;">${entry.message || '-'}</td>
-                `;
+
+                const indexCell = document.createElement('td');
+                indexCell.style.cssText = 'padding: 10px 16px; color: #61666d;';
+                indexCell.textContent = `${entry.index}/${entry.total}`;
+
+                const timeCell = document.createElement('td');
+                timeCell.style.cssText = 'padding: 10px 16px; color: #61666d; font-size: 12px;';
+                timeCell.textContent = entry.timestamp;
+
+                const uidCell = document.createElement('td');
+                uidCell.style.cssText = 'padding: 10px 16px; color: #18191c; font-family: monospace;';
+                uidCell.textContent = String(entry.uid);
+
+                const statusCell = document.createElement('td');
+                statusCell.style.cssText = 'padding: 10px 16px;';
+                const statusTag = document.createElement('span');
+                statusTag.style.cssText = `display: inline-block; padding: 2px 8px; border-radius: 4px; font-size: 12px; background: ${statusColors[entry.status]}20; color: ${statusColors[entry.status]}; font-weight: 500;`;
+                statusTag.textContent = statusLabels[entry.status] || entry.status;
+                statusCell.appendChild(statusTag);
+
+                const messageCell = document.createElement('td');
+                messageCell.style.cssText = 'padding: 10px 16px; color: #61666d; font-size: 12px;';
+                messageCell.textContent = entry.message || '-';
+
+                row.appendChild(indexCell);
+                row.appendChild(timeCell);
+                row.appendChild(uidCell);
+                row.appendChild(statusCell);
+                row.appendChild(messageCell);
                 tbody.appendChild(row);
             });
             table.appendChild(tbody);
@@ -1732,6 +1778,13 @@
         // 子选项点击事件
         document.getElementById('bl-refresh-remote').addEventListener('click', async (e) => {
             e.stopPropagation();
+            if (!ensureBatchNotRunning('刷新数据')) {
+                const menu = document.getElementById('bl-refresh-menu');
+                if (menu) {
+                    menu.style.display = 'none';
+                }
+                return;
+            }
             
             // 检查冷却时间
             const now = Date.now();
@@ -1787,6 +1840,13 @@
 
         document.getElementById('bl-refresh-cache').addEventListener('click', (e) => {
             e.stopPropagation();
+            if (!ensureBatchNotRunning('刷新数据')) {
+                const menu = document.getElementById('bl-refresh-menu');
+                if (menu) {
+                    menu.style.display = 'none';
+                }
+                return;
+            }
             const cached = getBlacklistCache();
             
             if (cached && cached.length > 0) {
@@ -1809,6 +1869,13 @@
 
         document.getElementById('bl-refresh-fallback').addEventListener('click', (e) => {
             e.stopPropagation();
+            if (!ensureBatchNotRunning('切换到内置数据')) {
+                const menu = document.getElementById('bl-refresh-menu');
+                if (menu) {
+                    menu.style.display = 'none';
+                }
+                return;
+            }
             BLACKLIST_UIDS = FALLBACK_UIDS;
             DATA_SOURCE = '备用数据';
             batchBlockFinished = false;
@@ -1825,6 +1892,13 @@
 
         document.getElementById('bl-refresh-xianlists').addEventListener('click', async (e) => {
             e.stopPropagation();
+            if (!ensureBatchNotRunning('刷新数据')) {
+                const menu = document.getElementById('bl-refresh-menu');
+                if (menu) {
+                    menu.style.display = 'none';
+                }
+                return;
+            }
             
             const btn = document.getElementById('bl-refresh-data');
             const originalText = btn.innerHTML;
@@ -1862,6 +1936,13 @@
 
         document.getElementById('bl-refresh-live-robot').addEventListener('click', async (e) => {
             e.stopPropagation();
+            if (!ensureBatchNotRunning('刷新数据')) {
+                const menu = document.getElementById('bl-refresh-menu');
+                if (menu) {
+                    menu.style.display = 'none';
+                }
+                return;
+            }
             
             const btn = document.getElementById('bl-refresh-data');
             const originalText = btn.innerHTML;
@@ -1907,6 +1988,13 @@
 
         document.getElementById('bl-import-uids').addEventListener('click', (e) => {
             e.stopPropagation();
+            if (!ensureBatchNotRunning('导入 UID')) {
+                const menu = document.getElementById('bl-data-submenu');
+                if (menu) {
+                    menu.style.display = 'none';
+                }
+                return;
+            }
             showImportUidDialog();
             const menu = document.getElementById('bl-data-submenu');
             menu.style.display = 'none';
@@ -2171,6 +2259,9 @@
             });
 
             GM_registerMenuCommand('📥 导入 UID 列表', () => {
+                if (!ensureBatchNotRunning('导入 UID')) {
+                    return;
+                }
                 showImportUidDialog();
             });
 
