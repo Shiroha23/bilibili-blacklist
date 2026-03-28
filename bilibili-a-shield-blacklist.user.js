@@ -937,6 +937,9 @@
         } finally {
             batchBlockRunning = false;
             batchBlockPaused = false;
+            // 移除操作被阻止弹窗
+            const blockedTip = document.getElementById('bilibili-blacklist-blocked-tip');
+            if (blockedTip) blockedTip.remove();
             // 更新按钮为开始/继续/重新状态
             if (btn) {
                 const progress = getProgress();
@@ -957,8 +960,11 @@
      * @param {string} title - 通知标题
      * @param {string} message - 通知内容
      * @param {boolean} showSystem - 是否显示系统通知（仅批量拉黑完成时显示）
+     * @param {string} topPosition - 自定义 top 位置
+     * @param {string} customId - 自定义弹窗 ID
+     * @param {number} displayTime - 自定义显示时间（毫秒）
      */
-    function showNotification(title, message, showSystem = false) {
+    function showNotification(title, message, showSystem = false, topPosition, customId, displayTime) {
         // 只有批量拉黑完成时才显示系统通知
         if (showSystem && typeof GM_notification !== 'undefined') {
             GM_notification({
@@ -969,21 +975,22 @@
         }
 
         // 始终在页面显示浮动提示
-        showFloatingTip(title, message);
+        showFloatingTip(title, message, topPosition, customId, displayTime);
     }
 
     /**
      * 显示浮动提示
      */
-    function showFloatingTip(title, message) {
-        const existing = document.getElementById('bilibili-blacklist-tip');
+    function showFloatingTip(title, message, topPosition, customId, displayTime) {
+        const tipId = customId || 'bilibili-blacklist-tip';
+        const existing = document.getElementById(tipId);
         if (existing) existing.remove();
 
         const tip = document.createElement('div');
-        tip.id = 'bilibili-blacklist-tip';
+        tip.id = tipId;
         tip.style.cssText = `
             position: fixed;
-            top: 100px;
+            top: ${topPosition || '100px'};
             right: 320px;
             background: linear-gradient(135deg, #00a1d6, #00b5e5);
             color: white;
@@ -1019,10 +1026,11 @@
 
         document.body.appendChild(tip);
 
+        const timeout = displayTime || 5000;
         setTimeout(() => {
             tip.style.animation = 'slideIn 0.3s ease reverse';
             setTimeout(() => tip.remove(), 300);
-        }, 5000);
+        }, timeout);
     }
 
     // ==================== 控制面板 ====================
@@ -1184,10 +1192,10 @@
     }
 
     function ensureBatchNotRunning(actionLabel) {
-        if (!batchBlockRunning) {
+        if (!batchBlockRunning || batchBlockPaused) {
             return true;
         }
-        showNotification('操作被阻止', `${actionLabel}前请先暂停或等待当前批量拉黑结束`);
+        showNotification('操作被阻止', `${actionLabel}前请先暂停或等待当前批量拉黑结束`, false, '200px', 'bilibili-blacklist-blocked-tip', 10000);
         return false;
     }
 
@@ -1718,6 +1726,9 @@
                     btn.style.background = '#52c41a';
                     showNotification('已暂停', '批量拉黑已暂停，可随时点击继续');
                     console.log('⏸️ 批量拉黑已暂停');
+                    // 暂停时移除操作被阻止弹窗，因为此时可以进行其他操作
+                    const blockedTip = document.getElementById('bilibili-blacklist-blocked-tip');
+                    if (blockedTip) blockedTip.remove();
                 } else {
                     btn.innerHTML = '⏸️ 暂停批量拉黑';
                     btn.style.background = '#faad14';
@@ -1816,6 +1827,7 @@
                     BLACKLIST_UIDS = uids;
                     DATA_SOURCE = 'A盾黑名单';
                     batchBlockFinished = false;
+                    batchBlockPaused = false;
                     lastRefreshTime = Date.now();
                     saveBlacklistCache(uids);
                     clearProgress();
@@ -1853,6 +1865,7 @@
                 BLACKLIST_UIDS = cached;
                 DATA_SOURCE = '本地缓存';
                 batchBlockFinished = false;
+                batchBlockPaused = false;
                 clearProgress();
                 console.log(`✅ 使用本地缓存数据: ${cached.length} 条`);
                 
@@ -1879,6 +1892,7 @@
             BLACKLIST_UIDS = FALLBACK_UIDS;
             DATA_SOURCE = '备用数据';
             batchBlockFinished = false;
+            batchBlockPaused = false;
             clearProgress();
             console.log(`⚠️ 使用备用数据: ${FALLBACK_UIDS.length} 条`);
             
@@ -1913,6 +1927,7 @@
                     BLACKLIST_UIDS = uids;
                     DATA_SOURCE = 'XianLists';
                     batchBlockFinished = false;
+                    batchBlockPaused = false;
                     saveBlacklistCache(uids);
                     clearProgress();
                     console.log(`✅ 成功获取 ${uids.length} 条黑名单数据`);
@@ -1957,6 +1972,7 @@
                     BLACKLIST_UIDS = uids;
                     DATA_SOURCE = '直播间机器人';
                     batchBlockFinished = false;
+                    batchBlockPaused = false;
                     saveBlacklistCache(uids);
                     clearProgress();
                     console.log(`✅ 成功获取 ${uids.length} 条黑名单数据`);
