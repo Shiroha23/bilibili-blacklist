@@ -25,7 +25,8 @@
         STORAGE_KEY: 'bilibili_blacklist_progress',
         SKIP_ALREADY_BLOCKED: true,
         MY_BLACKS_CACHE_KEY: 'bilibili_my_blacks_cache',
-        CACHE_KEY: 'bilibili_blacklist_cache'
+        CACHE_KEY: 'bilibili_blacklist_cache',
+        REFRESH_COOLDOWN: 5000
     };
 
     // ==================== 黑名单数据 ====================
@@ -143,6 +144,7 @@
     let batchBlockRunning = false;
     let batchBlockPaused = false;
     let batchBlockFinished = false;
+    let lastRefreshTime = 0;
     let myBlacklistUids = new Set();
     let blockDetailsLog = [];
     let skippedCount = 0;
@@ -788,7 +790,7 @@
         if (!batchBlockRunning || batchBlockPaused) {
             return true;
         }
-        showNotification('操作被阻止', `${actionLabel}前请先暂停或等待当前批量拉黑结束`, false, '200px', 'bilibili-blacklist-blocked-tip', 10000);
+        showNotification('操作被阻止', `${actionLabel}前请先暂停或等待当前批量拉黑结束`, false, '200px', 'bilibili-blacklist-blocked-tip', 5000);
         return false;
     }
 
@@ -1343,6 +1345,17 @@
                 return;
             }
             
+            // 检查冷却时间
+            const now = Date.now();
+            const timeSinceLastRefresh = now - lastRefreshTime;
+            if (timeSinceLastRefresh < CONFIG.REFRESH_COOLDOWN) {
+                const remainingSeconds = Math.ceil((CONFIG.REFRESH_COOLDOWN - timeSinceLastRefresh) / 1000);
+                showNotification('刷新冷却中', `请等待 ${remainingSeconds} 秒后再刷新`);
+                const menu = document.getElementById('bl-refresh-menu');
+                menu.style.display = 'none';
+                return;
+            }
+            
             const btn = document.getElementById('bl-refresh-data');
             const originalText = btn.innerHTML;
             btn.innerHTML = '⌛ 刷新中...';
@@ -1357,6 +1370,7 @@
                     DATA_SOURCE = 'A盾黑名单（备用源）';
                     batchBlockFinished = false;
                     batchBlockPaused = false;
+                    lastRefreshTime = Date.now();
                     clearProgress();
                     console.log(`✅ 成功获取 ${uids.length} 条黑名单数据`);
                     

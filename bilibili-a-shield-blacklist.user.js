@@ -1195,7 +1195,7 @@
         if (!batchBlockRunning || batchBlockPaused) {
             return true;
         }
-        showNotification('操作被阻止', `${actionLabel}前请先暂停或等待当前批量拉黑结束`, false, '200px', 'bilibili-blacklist-blocked-tip', 10000);
+        showNotification('操作被阻止', `${actionLabel}前请先暂停或等待当前批量拉黑结束`, false, '200px', 'bilibili-blacklist-blocked-tip', 5000);
         return false;
     }
 
@@ -1914,6 +1914,17 @@
                 return;
             }
             
+            // 检查冷却时间
+            const now = Date.now();
+            const timeSinceLastRefresh = now - lastRefreshTime;
+            if (timeSinceLastRefresh < CONFIG.REFRESH_COOLDOWN) {
+                const remainingSeconds = Math.ceil((CONFIG.REFRESH_COOLDOWN - timeSinceLastRefresh) / 1000);
+                showNotification('刷新冷却中', `请等待 ${remainingSeconds} 秒后再刷新`);
+                const menu = document.getElementById('bl-refresh-menu');
+                menu.style.display = 'none';
+                return;
+            }
+            
             const btn = document.getElementById('bl-refresh-data');
             const originalText = btn.innerHTML;
             btn.innerHTML = '⌛ 刷新中...';
@@ -1928,6 +1939,7 @@
                     DATA_SOURCE = 'XianLists';
                     batchBlockFinished = false;
                     batchBlockPaused = false;
+                    lastRefreshTime = Date.now();
                     saveBlacklistCache(uids);
                     clearProgress();
                     console.log(`✅ 成功获取 ${uids.length} 条黑名单数据`);
@@ -1959,6 +1971,17 @@
                 return;
             }
             
+            // 检查冷却时间
+            const now = Date.now();
+            const timeSinceLastRefresh = now - lastRefreshTime;
+            if (timeSinceLastRefresh < CONFIG.REFRESH_COOLDOWN) {
+                const remainingSeconds = Math.ceil((CONFIG.REFRESH_COOLDOWN - timeSinceLastRefresh) / 1000);
+                showNotification('刷新冷却中', `请等待 ${remainingSeconds} 秒后再刷新`);
+                const menu = document.getElementById('bl-refresh-menu');
+                menu.style.display = 'none';
+                return;
+            }
+            
             const btn = document.getElementById('bl-refresh-data');
             const originalText = btn.innerHTML;
             btn.innerHTML = '⌛ 刷新中...';
@@ -1973,6 +1996,7 @@
                     DATA_SOURCE = '直播间机器人';
                     batchBlockFinished = false;
                     batchBlockPaused = false;
+                    lastRefreshTime = Date.now();
                     saveBlacklistCache(uids);
                     clearProgress();
                     console.log(`✅ 成功获取 ${uids.length} 条黑名单数据`);
