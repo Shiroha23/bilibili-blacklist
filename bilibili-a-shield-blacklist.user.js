@@ -2255,15 +2255,6 @@
     async function init() {
         console.log('🛡️ B站A盾黑名单拉黑助手已加载');
 
-        // 先加载XianLists列表
-        await loadXianJunList();
-        
-        // 检查当前用户是否为XianLists
-        if (isCurrentUserXianJun()) {
-            console.log('检测到XianLists成分，禁止使用脚本');
-            return;
-        }
-
         // 检查是否已同意免责声明
         if (!hasAgreedToDisclaimer()) {
             const agreed = await showDisclaimer();
@@ -2271,6 +2262,16 @@
                 console.log('用户不同意免责声明，脚本将不加载');
                 return;
             }
+        }
+
+        // 先加载XianLists列表
+        await loadXianJunList();
+        
+        // 检查当前用户是否为XianLists
+        if (isCurrentUserXianJun()) {
+            console.log('nyan');
+            window.open('https://www.nyan.cat/', '_blank');
+            return;
         }
 
         // 优先使用本地缓存数据，不从远程自动获取
