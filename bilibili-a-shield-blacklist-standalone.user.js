@@ -1273,10 +1273,10 @@
                 <button id="bl-close-panel" style="background: none; border: none; cursor: pointer; font-size: 18px; color: #9499a0;">×</button>
             </div>
             <div style="margin-bottom: 15px; padding: 10px; background: #f6f7f8; border-radius: 8px; font-size: 13px; color: #61666d;">
-                <div>UID总数: <strong style="color: #18191c;">${total}</strong></div>
+                <div>黑名单总数: <strong style="color: #18191c;">${total}</strong></div>
                 <div id="bl-progress-display">当前进度: <strong style="color: #00a1d6;">${progress}</strong> / ${total}</div>
                 <div>数据来源: <strong style="color: #18191c;">${DATA_SOURCE}</strong></div>
-                <div>登录状态: <strong style="color: ${isLoggedIn() ? '#00aeec' : '#f25d8e'};">${isLoggedIn() ? '已登录' : '未登录'}</strong>${isLoggedIn() ? ` （${getCurrentUid()}）` : ''}</div>
+                <div>登录状态: <strong style="color: ${isLoggedIn() ? '#00aeec' : '#f25d8e'};">${isLoggedIn() ? '已登录' : '未登录'}</strong>${isLoggedIn() ? ` - ${getCurrentUid()}` : ''}</div>
                 <div>运行状态: <strong id="bl-current-status" style="color: #9499a0;">待运行</strong></div>
             </div>
             <div style="display: flex; flex-direction: column; gap: 8px;">
