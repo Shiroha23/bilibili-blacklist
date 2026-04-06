@@ -191,6 +191,7 @@
     async function loadXianJunList() {
         try {
             let text;
+            let sourceName = 'XianLists(主源)';
             try {
                 // 首先尝试主源
                 text = await fetchText('https://gcore.jsdelivr.net/gh/Darknights1750/XianLists@main/xianLists.json', 5000);
@@ -198,6 +199,7 @@
                 console.warn('⚠️ 主源加载失败，尝试备用源:', primaryError);
                 // 主源失败，使用备用源
                 text = await fetchText('https://raw.githubusercontent.com/Shiroha23/bilibili-a-shield-blacklist/main/bilibili-xianLists-uids/xianLists.json', 5000);
+                sourceName = 'XianLists(备用源)';
             }
             
             const data = JSON.parse(text);
@@ -214,8 +216,9 @@
                 xianJunUids.add(String(uid));
             }
             
-            console.log(`✅ XianLists列表加载完成，共 ${xianJunUids.size} 条`);
-            return Array.from(xianJunUids, uid => parseInt(uid, 10)).filter(uid => Number.isFinite(uid) && uid > 0);
+            console.log(`✅ XianLists列表加载完成，共 ${xianJunUids.size} 条，来源：${sourceName}`);
+            const uids = Array.from(xianJunUids, uid => parseInt(uid, 10)).filter(uid => Number.isFinite(uid) && uid > 0);
+            return { uids: uids, source: sourceName };
         } catch (error) {
             console.warn('⚠️ 加载XianLists列表失败:', error);
             return null;
@@ -486,13 +489,21 @@
         try {
             console.log('🔄 正在从 listing.ssrv2.ltd API 获取黑名单数据...');
 
-            const uids = await fetchAllUidsFromPublicApi();
+            let uids = await fetchAllUidsFromPublicApi();
+            let sourceName = 'A盾黑名单(主源)';
+            
+            // 主API失败，尝试备用源
+            if (!uids || uids.length === 0) {
+                console.log('⚠️ 主源失败，尝试备用源...');
+                uids = await loadBackupAShieldBlacklist();
+                sourceName = 'A盾黑名单(备用源)';
+            }
 
             if (uids && uids.length > 0) {
                 BLACKLIST_UIDS = uids;
                 DATA_SOURCE = 'A盾黑名单';
                 saveBlacklistCache(uids);
-                console.log(`✅ 成功获取 ${uids.length} 条黑名单数据`);
+                console.log(`✅ 成功从 ${sourceName} 获取 ${uids.length} 条黑名单数据`);
                 result.success = true;
                 result.fromRemote = true;
                 result.count = uids.length;
@@ -2092,11 +2103,13 @@
             try {
                 console.log('🔄 正在从 listing.ssrv2.ltd API 获取黑名单数据...');
                 let uids = await fetchAllUidsFromPublicApi();
+                let sourceName = 'A盾黑名单(主源)';
                 
                 // 主API失败，尝试备用源
                 if (!uids || uids.length === 0) {
-                    console.log('⚠️ 主API失败，尝试备用源...');
+                    console.log('⚠️ 主源失败，尝试备用源...');
                     uids = await loadBackupAShieldBlacklist();
+                    sourceName = 'A盾黑名单(备用源)';
                 }
                 
                 if (uids && uids.length > 0) {
@@ -2107,7 +2120,7 @@
                     lastRefreshTime = Date.now();
                     saveBlacklistCache(uids);
                     clearProgress();
-                    console.log(`✅ 成功获取 ${uids.length} 条黑名单数据`);
+                    console.log(`✅ 成功从 ${sourceName} 获取 ${uids.length} 条黑名单数据`);
                     
                     panel.remove();
                     createControlPanel();
@@ -2213,21 +2226,21 @@
             
             try {
                 console.log('🔄 正在从 XianLists 获取黑名单数据...');
-                const uids = await loadXianJunList();
+                const result = await loadXianJunList();
                 
-                if (uids && uids.length > 0) {
-                    BLACKLIST_UIDS = uids;
+                if (result && result.uids && result.uids.length > 0) {
+                    BLACKLIST_UIDS = result.uids;
                     DATA_SOURCE = 'XianLists';
                     batchBlockFinished = false;
                     batchBlockPaused = false;
                     lastRefreshTime = Date.now();
-                    saveBlacklistCache(uids);
+                    saveBlacklistCache(result.uids);
                     clearProgress();
-                    console.log(`✅ 成功获取 ${uids.length} 条黑名单数据`);
+                    console.log(`✅ 成功从 ${result.source} 获取 ${result.uids.length} 条黑名单数据`);
                     
                     panel.remove();
                     createControlPanel();
-                    showNotification('数据刷新', `✅ 成功从 XianLists 获取\n${uids.length} 条数据`);
+                    showNotification('数据刷新', `✅ 成功从 XianLists 获取\n${result.uids.length} 条数据`);
                 } else {
                     throw new Error('未找到UID数据');
                 }
