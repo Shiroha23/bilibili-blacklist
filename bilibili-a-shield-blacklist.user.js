@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         B站A盾黑名单拉黑助手
 // @namespace    http://tampermonkey.net/
-// @version      1.7
+// @version      1.8
 // @description  自动将A盾黑名单中的用户添加到B站黑名单，支持从 listing.ssrv2.ltd 动态获取数据
 // @author       Shiroha23
 // @match        https://www.bilibili.com/*
@@ -159,32 +159,23 @@
     ];
 
     let BLACKLIST_UIDS = [];
+    let blacklistUidSet = new Set();
     let DATA_SOURCE = '备用数据';
-    /** 防止重复启动批量拉黑 */
-    let batchBlockRunning = false;
-    /** 批量拉黑暂停状态 */
-    let batchBlockPaused = false;
-    /** 批量拉黑完成状态 */
-    let batchBlockFinished = false;
-    /** 批量拉黑是否应该停止 */
-    let batchBlockShouldStop = false;
-    /** 是否正在刷新数据 */
+    const batchState = {
+        running: false,
+        paused: false,
+        finished: false,
+        shouldStop: false
+    };
     let isRefreshing = false;
-    /** A盾黑名单上次刷新时间 */
     let lastRefreshTime = 0;
-    /** 我的黑名单UID集合（用于快速检查） */
     let myBlacklistUids = new Set();
-    /** 已跳过的用户数量 */
     let skippedCount = 0;
-    /** 详细日志记录 */
     let blockDetailsLog = [];
-    /** 最大日志条数 */
     const MAX_LOG_ENTRIES = 11037;
-    /** XianLists UID集合 */
+    const MAX_API_PAGES = 2000;
     let xianJunUids = new Set();
-    /** 是否为XianLists检测完成 */
     let xianJunCheckComplete = false;
-    /** 是否已绑定全局菜单关闭监听 */
     let globalMenuCloseHandlerBound = false;
     
     /** 加载XianLists列表 */
@@ -294,20 +285,23 @@
         }
     }
     
-    /** 更新状态显示 */
+    function syncBlacklistUidSet() {
+        blacklistUidSet = new Set(BLACKLIST_UIDS);
+    }
+
     function updateStatusDisplay() {
         const statusEl = document.getElementById('bl-current-status');
         if (statusEl) {
             let statusText = '待运行';
             let statusColor = '#9499a0';
             
-            if (batchBlockPaused) {
+            if (batchState.paused) {
                 statusText = '已暂停';
                 statusColor = '#faad14';
-            } else if (batchBlockRunning) {
+            } else if (batchState.running) {
                 statusText = '运行中';
                 statusColor = '#52c41a';
-            } else if (batchBlockFinished) {
+            } else if (batchState.finished) {
                 statusText = '已完成';
                 statusColor = '#13c2c2';
             }
@@ -381,8 +375,7 @@
         
         blockDetailsLog.push(logEntry);
         
-        // 限制日志数量
-        if (blockDetailsLog.length > MAX_LOG_ENTRIES) {
+        if (blockDetailsLog.length > MAX_LOG_ENTRIES * 2) {
             blockDetailsLog = blockDetailsLog.slice(-MAX_LOG_ENTRIES);
         }
     }
@@ -416,6 +409,12 @@
     }
 
     // ==================== 工具函数 ====================
+
+    function escapeHtml(str) {
+        const div = document.createElement('div');
+        div.textContent = String(str);
+        return div.innerHTML;
+    }
 
     /**
      * 跨域拉取文本：优先 GM_xmlhttpRequest（不受页面 CORS 限制），否则回退 fetch
@@ -501,6 +500,7 @@
 
             if (uids && uids.length > 0) {
                 BLACKLIST_UIDS = uids;
+                syncBlacklistUidSet();
                 DATA_SOURCE = 'A盾黑名单';
                 saveBlacklistCache(uids);
                 console.log(`✅ 成功从 ${sourceName} 获取 ${uids.length} 条黑名单数据`);
@@ -518,6 +518,7 @@
             const cached = getBlacklistCache();
             if (cached && cached.length > 0) {
                 BLACKLIST_UIDS = cached;
+                syncBlacklistUidSet();
                 DATA_SOURCE = '本地缓存';
                 console.log(`✅ 使用本地缓存数据: ${cached.length} 条`);
                 result.success = true;
@@ -526,6 +527,7 @@
                 return result;
             } else {
                 BLACKLIST_UIDS = FALLBACK_UIDS;
+                syncBlacklistUidSet();
                 DATA_SOURCE = '备用数据';
                 console.log(`⚠️ 使用备用数据: ${FALLBACK_UIDS.length} 条`);
                 result.success = true;
@@ -545,8 +547,10 @@
         const uids = [];
         let offset = 0;
         let hasMore = true;
+        let pageCount = 0;
 
-        while (hasMore) {
+        while (hasMore && pageCount < MAX_API_PAGES) {
+            pageCount++;
             const apiUrl =
                 CONFIG.BLACKLIST_API_URL +
                 '?' +
@@ -577,22 +581,6 @@
         }
 
         return uids;
-    }
-
-    /**
-     * 从HTML中解析UID
-     */
-    function parseUidsFromHtml(html) {
-        const seen = new Set();
-        const uidPattern = /space\.bilibili\.com\/(\d+)/g;
-        let match;
-        while ((match = uidPattern.exec(html)) !== null) {
-            const uid = parseInt(match[1], 10);
-            if (!seen.has(uid)) {
-                seen.add(uid);
-            }
-        }
-        return Array.from(seen);
     }
 
     /**
@@ -704,11 +692,11 @@
                 console.log(`⚠️ 用户 ${uid} 已经在黑名单中`);
             } else {
                 result.message = data.message || data.msg || `错误代码: ${data.code}`;
-                console.error(`❌ 拉黑用户 ${uid} 失败:`, result.message);
+                console.error(`❌ 拉黑用户失败，错误代码: ${data.code}`);
             }
         } catch (error) {
             result.message = error.message || '网络错误';
-            console.error(`❌ 拉黑用户 ${uid} 时出错:`, error);
+            console.error(`❌ 拉黑用户时出错:`, error.message);
         }
 
         return result;
@@ -752,7 +740,7 @@
         if (typeof GM_setValue !== 'undefined') {
             GM_setValue(CONFIG.STORAGE_KEY, '0');
         }
-        localStorage.removeItem(CONFIG.STORAGE_KEY);
+        localStorage.setItem(CONFIG.STORAGE_KEY, '0');
     }
 
     /**
@@ -786,7 +774,7 @@
             showNotification('操作被阻止', '开始批量拉黑前请等待数据刷新完成', false, '200px', 'bilibili-blacklist-blocked-tip', 5000);
             return;
         }
-        if (batchBlockRunning) {
+        if (batchState.running) {
             alert('批量拉黑正在进行中，请等待当前任务结束。');
             return;
         }
@@ -795,8 +783,8 @@
             return;
         }
 
-        batchBlockRunning = true;
-        batchBlockFinished = false;
+        batchState.running = true;
+        batchState.finished = false;
         skippedCount = 0;
         startIndex = normalizeBatchStartIndex(startIndex);
         const total = BLACKLIST_UIDS.length;
@@ -830,16 +818,15 @@
 
             for (let i = startIndex; i < total; i++) {
                 // 检查是否暂停或应该停止
-                while (batchBlockPaused) {
-                    if (batchBlockShouldStop) {
+                while (batchState.paused) {
+                    if (batchState.shouldStop) {
                         console.log('🛑 批量拉黑被终止');
                         return;
                     }
                     console.log('⏸️ 批量拉黑已暂停，等待继续...');
-                    await delay(1000); // 每秒钟检查一次
+                    await delay(1000);
                 }
-                // 检查是否应该停止（即使不在暂停状态）
-                if (batchBlockShouldStop) {
+                if (batchState.shouldStop) {
                     console.log('🛑 批量拉黑被终止');
                     return;
                 }
@@ -950,7 +937,7 @@
             }
 
             console.log(`✅ 批量拉黑完成！成功: ${success}, 失败: ${failed}, 跳过: ${skippedCount}`);
-            batchBlockFinished = true;
+            batchState.finished = true;
             // 批量拉黑完成时显示系统通知
             showNotification(
                 '批量拉黑完成',
@@ -963,23 +950,20 @@
                 saveProgress(total);
             }
         } finally {
-            batchBlockRunning = false;
-            batchBlockPaused = false;
-            batchBlockShouldStop = false;
-            // 移除操作被阻止弹窗
+            batchState.running = false;
+            batchState.paused = false;
+            batchState.shouldStop = false;
             const blockedTip = document.getElementById('bilibili-blacklist-blocked-tip');
             if (blockedTip) blockedTip.remove();
-            // 更新按钮为开始/继续/重新状态
             if (btn) {
                 const progress = getProgress();
-                if (batchBlockFinished) {
+                if (batchState.finished) {
                     btn.innerHTML = '🔄 重新批量拉黑';
                 } else {
                     btn.innerHTML = progress > 0 ? '▶️ 继续批量拉黑' : '▶️ 开始批量拉黑';
                 }
                 btn.style.background = '#00a1d6';
             }
-            // 更新状态显示
             updateStatusDisplay();
         }
     }
@@ -1130,7 +1114,7 @@
         const out = [];
         let pn = 1;
 
-        while (true) {
+        while (pn <= MAX_API_PAGES) {
             const url = CONFIG.BILI_BLACKS_API_URL + '?' + new URLSearchParams({
                 pn: String(pn),
                 ps: String(ps)
@@ -1214,8 +1198,9 @@
      */
     function applyImportedUids(uids) {
         BLACKLIST_UIDS = uids;
+        syncBlacklistUidSet();
         DATA_SOURCE = '用户导入';
-        batchBlockFinished = false;
+        batchState.finished = false;
         saveBlacklistCache(uids);
         clearProgress();
     }
@@ -1225,7 +1210,7 @@
             showNotification('操作被阻止', `${actionLabel}前请等待数据刷新完成`, false, '200px', 'bilibili-blacklist-blocked-tip', 5000);
             return false;
         }
-        if (!batchBlockRunning || batchBlockPaused) {
+        if (!batchState.running || batchState.paused) {
             return true;
         }
         showNotification('操作被阻止', `${actionLabel}前请先暂停或等待当前批量拉黑结束`, false, '200px', 'bilibili-blacklist-blocked-tip', 5000);
@@ -1635,7 +1620,7 @@
             const notInList = [];
 
             for (const uid of uids) {
-                if (BLACKLIST_UIDS.includes(uid)) {
+                if (blacklistUidSet.has(uid)) {
                     inBlacklist++;
                     inList.push(uid);
                 } else {
@@ -1652,14 +1637,14 @@
             if (inList.length > 0) {
                 resultHtml += `<div style="margin-top: 8px; padding-top: 8px; border-top: 1px solid #e3e5e7;">`;
                 resultHtml += `<div style="margin-bottom: 4px;"><strong>在黑名单中的UID：</strong></div>`;
-                resultHtml += `<div style="font-family: ui-monospace, monospace; font-size: 12px; color: #52c41a;">${inList.join(', ')}</div>`;
+                resultHtml += `<div style="font-family: ui-monospace, monospace; font-size: 12px; color: #52c41a;">${inList.map(escapeHtml).join(', ')}</div>`;
                 resultHtml += `</div>`;
             }
             
             if (notInList.length > 0) {
                 resultHtml += `<div style="margin-top: 8px; padding-top: 8px; border-top: 1px solid #e3e5e7;">`;
                 resultHtml += `<div style="margin-bottom: 4px;"><strong>不在黑名单中的UID：</strong></div>`;
-                resultHtml += `<div style="font-family: ui-monospace, monospace; font-size: 12px; color: #fa8c16;">${notInList.join(', ')}</div>`;
+                resultHtml += `<div style="font-family: ui-monospace, monospace; font-size: 12px; color: #fa8c16;">${notInList.map(escapeHtml).join(', ')}</div>`;
                 resultHtml += `</div>`;
             }
 
@@ -1860,11 +1845,11 @@
                 <div id="bl-progress-display">当前进度: <strong style="color: #00a1d6;">${progress}</strong> / ${total}</div>
                 <div>数据来源: <strong style="color: #18191c;">${DATA_SOURCE}</strong></div>
                 <div>登录状态: <strong style="color: ${isLoggedIn() ? '#00aeec' : '#f25d8e'};">${isLoggedIn() ? '已登录' : '未登录'}</strong>${isLoggedIn() ? ` - ${getCurrentUid()}` : ''}</div>
-                <div>运行状态: <strong id="bl-current-status" style="color: ${batchBlockPaused ? '#faad14' : batchBlockRunning ? '#52c41a' : batchBlockFinished ? '#13c2c2' : '#9499a0'};">${batchBlockPaused ? '已暂停' : batchBlockRunning ? '运行中' : batchBlockFinished ? '已完成' : '待运行'}</strong></div>
+                <div>运行状态: <strong id="bl-current-status" style="color: ${batchState.paused ? '#faad14' : batchState.running ? '#52c41a' : batchState.finished ? '#13c2c2' : '#9499a0'};">${batchState.paused ? '已暂停' : batchState.running ? '运行中' : batchState.finished ? '已完成' : '待运行'}</strong></div>>
             </div>
             <div style="display: flex; flex-direction: column; gap: 8px;">
                 <button id="bl-control-batch" style="padding: 10px; background: #00a1d6; color: white; border: none; border-radius: 6px; cursor: pointer; font-size: 14px; font-weight: 500; transition: background 0.2s;">
-                    ${batchBlockFinished ? '🔄 重新批量拉黑' : (progress > 0 ? '▶️ 继续批量拉黑' : '▶️ 开始批量拉黑')}
+                    ${batchState.finished ? '🔄 重新批量拉黑' : (progress > 0 ? '▶️ 继续批量拉黑' : '▶️ 开始批量拉黑')}
                 </button>
                 <div style="position: relative;">
                     <button id="bl-refresh-data" style="padding: 10px; background: #52c41a; color: white; border: none; border-radius: 6px; cursor: pointer; font-size: 14px; font-weight: 500; transition: background 0.2s; width: 100%; text-align: center;">
@@ -1944,8 +1929,7 @@
         document.getElementById('bl-control-batch').addEventListener('click', () => {
             const btn = document.getElementById('bl-control-batch');
             
-            if (!batchBlockRunning) {
-                // 未运行状态 - 开始/继续/重新批量拉黑
+            if (!batchState.running) {
                 if (!ensureBatchNotRunning('开始批量拉黑')) {
                     return;
                 }
@@ -1953,28 +1937,24 @@
                     alert('请先登录B站账号！');
                     return;
                 }
-                // 如果是重新批量拉黑，清除进度
-                if (batchBlockFinished) {
+                if (batchState.finished) {
                     clearProgress();
-                    batchBlockFinished = false;
+                    batchState.finished = false;
                 }
                 const startIndex = normalizeBatchStartIndex(getProgress());
                 batchBlock(startIndex);
             } else {
-                // 运行状态 - 暂停/继续
-                if (batchBlockPaused) {
-                    // 从暂停状态继续 - 检查是否在刷新数据
+                if (batchState.paused) {
                     if (!ensureBatchNotRunning('继续批量拉黑')) {
                         return;
                     }
                 }
-                batchBlockPaused = !batchBlockPaused;
-                if (batchBlockPaused) {
+                batchState.paused = !batchState.paused;
+                if (batchState.paused) {
                     btn.innerHTML = '▶️ 继续批量拉黑';
                     btn.style.background = '#52c41a';
                     showNotification('已暂停', '批量拉黑已暂停，可随时点击继续');
                     console.log('⏸️ 批量拉黑已暂停');
-                    // 暂停时移除操作被阻止弹窗，因为此时可以进行其他操作
                     const blockedTip = document.getElementById('bilibili-blacklist-blocked-tip');
                     if (blockedTip) blockedTip.remove();
                 } else {
@@ -2072,65 +2052,52 @@
         }
 
         // 子选项点击事件
-        document.getElementById('bl-refresh-remote').addEventListener('click', async (e) => {
-            e.stopPropagation();
+        async function handleRefreshData(loadFn, sourceLabel, needCooldown = true) {
             if (!ensureBatchNotRunning('刷新数据')) {
                 const menu = document.getElementById('bl-refresh-menu');
-                if (menu) {
+                if (menu) menu.style.display = 'none';
+                return;
+            }
+            if (needCooldown) {
+                const now = Date.now();
+                const timeSinceLastRefresh = now - lastRefreshTime;
+                if (timeSinceLastRefresh < CONFIG.REFRESH_COOLDOWN) {
+                    const remainingSeconds = Math.ceil((CONFIG.REFRESH_COOLDOWN - timeSinceLastRefresh) / 1000);
+                    showNotification('刷新冷却中', `请等待 ${remainingSeconds} 秒后再刷新`);
+                    const menu = document.getElementById('bl-refresh-menu');
                     menu.style.display = 'none';
+                    return;
                 }
-                return;
             }
-            
-            // 检查冷却时间
-            const now = Date.now();
-            const timeSinceLastRefresh = now - lastRefreshTime;
-            if (timeSinceLastRefresh < CONFIG.REFRESH_COOLDOWN) {
-                const remainingSeconds = Math.ceil((CONFIG.REFRESH_COOLDOWN - timeSinceLastRefresh) / 1000);
-                showNotification('刷新冷却中', `请等待 ${remainingSeconds} 秒后再刷新`);
-                const menu = document.getElementById('bl-refresh-menu');
-                menu.style.display = 'none';
-                return;
-            }
-            
             const btn = document.getElementById('bl-refresh-data');
             const originalText = btn.innerHTML;
             btn.innerHTML = '⌛ 刷新中...';
             btn.disabled = true;
             isRefreshing = true;
-            batchBlockShouldStop = true;
-            
+            batchState.shouldStop = true;
             try {
-                console.log('🔄 正在从 listing.ssrv2.ltd API 获取黑名单数据...');
-                let uids = await fetchAllUidsFromPublicApi();
-                let sourceName = 'A盾黑名单(主源)';
-                
-                // 主API失败，尝试备用源
-                if (!uids || uids.length === 0) {
-                    console.log('⚠️ 主源失败，尝试备用源...');
-                    uids = await loadBackupAShieldBlacklist();
-                    sourceName = 'A盾黑名单(备用源)';
-                }
-                
+                const result = await loadFn();
+                const uids = Array.isArray(result) ? result : (result && result.uids);
+                const sourceName = (result && result.source) || sourceLabel;
                 if (uids && uids.length > 0) {
                     BLACKLIST_UIDS = uids;
-                    DATA_SOURCE = 'A盾黑名单';
-                    batchBlockFinished = false;
-                    batchBlockPaused = false;
-                    lastRefreshTime = Date.now();
+                    syncBlacklistUidSet();
+                    DATA_SOURCE = sourceLabel;
+                    batchState.finished = false;
+                    batchState.paused = false;
+                    if (needCooldown) lastRefreshTime = Date.now();
                     saveBlacklistCache(uids);
                     clearProgress();
                     console.log(`✅ 成功从 ${sourceName} 获取 ${uids.length} 条黑名单数据`);
-                    
                     panel.remove();
                     createControlPanel();
-                    showNotification('数据刷新', `✅ 成功从 A盾黑名单 获取\n${uids.length} 条数据`);
+                    showNotification('数据刷新', `✅ 成功从 ${sourceLabel} 获取\n${uids.length} 条数据`);
                 } else {
                     throw new Error('未找到UID数据');
                 }
             } catch (error) {
-                console.warn('⚠️ 从远程获取黑名单失败:', error);
-                showNotification('数据刷新失败', `❌ 从A盾黑名单获取数据失败: ${error.message}`);
+                console.warn(`⚠️ 从${sourceLabel}获取黑名单失败:`, error);
+                showNotification('数据刷新失败', `❌ 从${sourceLabel}获取数据失败: ${error.message}`);
             } finally {
                 btn.innerHTML = originalText;
                 btn.disabled = false;
@@ -2138,182 +2105,66 @@
                 const menu = document.getElementById('bl-refresh-menu');
                 menu.style.display = 'none';
             }
+        }
+
+        document.getElementById('bl-refresh-remote').addEventListener('click', async (e) => {
+            e.stopPropagation();
+            await handleRefreshData(async () => {
+                let uids = await fetchAllUidsFromPublicApi();
+                let sourceName = 'A盾黑名单(主源)';
+                if (!uids || uids.length === 0) {
+                    uids = await loadBackupAShieldBlacklist();
+                    sourceName = 'A盾黑名单(备用源)';
+                }
+                return { uids, source: sourceName };
+            }, 'A盾黑名单');
         });
 
         document.getElementById('bl-refresh-cache').addEventListener('click', (e) => {
             e.stopPropagation();
-            if (!ensureBatchNotRunning('刷新数据')) {
-                const menu = document.getElementById('bl-refresh-menu');
-                if (menu) {
-                    menu.style.display = 'none';
-                }
-                return;
-            }
-            batchBlockShouldStop = true;
             const cached = getBlacklistCache();
-            
             if (cached && cached.length > 0) {
                 BLACKLIST_UIDS = cached;
+                syncBlacklistUidSet();
                 DATA_SOURCE = '本地缓存';
-                batchBlockFinished = false;
-                batchBlockPaused = false;
+                batchState.finished = false;
+                batchState.paused = false;
                 clearProgress();
                 console.log(`✅ 使用本地缓存数据: ${cached.length} 条`);
-                
                 panel.remove();
                 createControlPanel();
                 showNotification('数据刷新', `✅ 使用本地缓存数据\n${cached.length} 条数据`);
             } else {
                 showNotification('数据刷新失败', '❌ 本地缓存为空');
             }
-            
             const menu = document.getElementById('bl-refresh-menu');
             menu.style.display = 'none';
         });
 
         document.getElementById('bl-refresh-fallback').addEventListener('click', (e) => {
             e.stopPropagation();
-            if (!ensureBatchNotRunning('切换到内置数据')) {
-                const menu = document.getElementById('bl-refresh-menu');
-                if (menu) {
-                    menu.style.display = 'none';
-                }
-                return;
-            }
-            batchBlockShouldStop = true;
             BLACKLIST_UIDS = FALLBACK_UIDS;
+            syncBlacklistUidSet();
             DATA_SOURCE = '备用数据';
-            batchBlockFinished = false;
-            batchBlockPaused = false;
+            batchState.finished = false;
+            batchState.paused = false;
             clearProgress();
             console.log(`⚠️ 使用备用数据: ${FALLBACK_UIDS.length} 条`);
-            
             panel.remove();
             createControlPanel();
             showNotification('数据刷新', `⚠️ 使用内置备用数据\n${FALLBACK_UIDS.length} 条数据`);
-            
             const menu = document.getElementById('bl-refresh-menu');
             menu.style.display = 'none';
         });
 
         document.getElementById('bl-refresh-xianlists').addEventListener('click', async (e) => {
             e.stopPropagation();
-            if (!ensureBatchNotRunning('刷新数据')) {
-                const menu = document.getElementById('bl-refresh-menu');
-                if (menu) {
-                    menu.style.display = 'none';
-                }
-                return;
-            }
-            
-            // 检查冷却时间
-            const now = Date.now();
-            const timeSinceLastRefresh = now - lastRefreshTime;
-            if (timeSinceLastRefresh < CONFIG.REFRESH_COOLDOWN) {
-                const remainingSeconds = Math.ceil((CONFIG.REFRESH_COOLDOWN - timeSinceLastRefresh) / 1000);
-                showNotification('刷新冷却中', `请等待 ${remainingSeconds} 秒后再刷新`);
-                const menu = document.getElementById('bl-refresh-menu');
-                menu.style.display = 'none';
-                return;
-            }
-            
-            const btn = document.getElementById('bl-refresh-data');
-            const originalText = btn.innerHTML;
-            btn.innerHTML = '⌛ 刷新中...';
-            btn.disabled = true;
-            isRefreshing = true;
-            batchBlockShouldStop = true;
-            
-            try {
-                console.log('🔄 正在从 XianLists 获取黑名单数据...');
-                const result = await loadXianJunList();
-                
-                if (result && result.uids && result.uids.length > 0) {
-                    BLACKLIST_UIDS = result.uids;
-                    DATA_SOURCE = 'XianLists';
-                    batchBlockFinished = false;
-                    batchBlockPaused = false;
-                    lastRefreshTime = Date.now();
-                    saveBlacklistCache(result.uids);
-                    clearProgress();
-                    console.log(`✅ 成功从 ${result.source} 获取 ${result.uids.length} 条黑名单数据`);
-                    
-                    panel.remove();
-                    createControlPanel();
-                    showNotification('数据刷新', `✅ 成功从 XianLists 获取\n${result.uids.length} 条数据`);
-                } else {
-                    throw new Error('未找到UID数据');
-                }
-            } catch (error) {
-                console.warn('⚠️ 从XianLists获取黑名单失败:', error);
-                showNotification('数据刷新失败', `❌ 从XianLists获取数据失败: ${error.message}`);
-            } finally {
-                btn.innerHTML = originalText;
-                btn.disabled = false;
-                isRefreshing = false;
-                const menu = document.getElementById('bl-refresh-menu');
-                menu.style.display = 'none';
-            }
+            await handleRefreshData(loadXianJunList, 'XianLists');
         });
 
         document.getElementById('bl-refresh-live-robot').addEventListener('click', async (e) => {
             e.stopPropagation();
-            if (!ensureBatchNotRunning('刷新数据')) {
-                const menu = document.getElementById('bl-refresh-menu');
-                if (menu) {
-                    menu.style.display = 'none';
-                }
-                return;
-            }
-            
-            // 检查冷却时间
-            const now = Date.now();
-            const timeSinceLastRefresh = now - lastRefreshTime;
-            if (timeSinceLastRefresh < CONFIG.REFRESH_COOLDOWN) {
-                const remainingSeconds = Math.ceil((CONFIG.REFRESH_COOLDOWN - timeSinceLastRefresh) / 1000);
-                showNotification('刷新冷却中', `请等待 ${remainingSeconds} 秒后再刷新`);
-                const menu = document.getElementById('bl-refresh-menu');
-                menu.style.display = 'none';
-                return;
-            }
-            
-            const btn = document.getElementById('bl-refresh-data');
-            const originalText = btn.innerHTML;
-            btn.innerHTML = '⌛ 刷新中...';
-            btn.disabled = true;
-            isRefreshing = true;
-            batchBlockShouldStop = true;
-            
-            try {
-                console.log('🔄 正在从 直播间机器人 获取黑名单数据...');
-                const uids = await loadLiveRoomRobotList();
-                
-                if (uids && uids.length > 0) {
-                    BLACKLIST_UIDS = uids;
-                    DATA_SOURCE = '直播间机器人';
-                    batchBlockFinished = false;
-                    batchBlockPaused = false;
-                    lastRefreshTime = Date.now();
-                    saveBlacklistCache(uids);
-                    clearProgress();
-                    console.log(`✅ 成功获取 ${uids.length} 条黑名单数据`);
-                    
-                    panel.remove();
-                    createControlPanel();
-                    showNotification('数据刷新', `✅ 成功从 直播间机器人 获取\n${uids.length} 条数据`);
-                } else {
-                    throw new Error('未找到UID数据');
-                }
-            } catch (error) {
-                console.warn('⚠️ 从直播间机器人获取黑名单失败:', error);
-                showNotification('数据刷新失败', `❌ 从直播间机器人获取数据失败: ${error.message}`);
-            } finally {
-                btn.innerHTML = originalText;
-                btn.disabled = false;
-                isRefreshing = false;
-                const menu = document.getElementById('bl-refresh-menu');
-                menu.style.display = 'none';
-            }
+            await handleRefreshData(loadLiveRoomRobotList, '直播间机器人');
         });
 
         // 黑名单管理子选项点击事件
@@ -2573,11 +2424,11 @@
             DATA_SOURCE = '本地缓存';
             console.log(`📋 使用本地缓存数据: ${cached.length} 条`);
         } else {
-            // 使用内置备用数据
             BLACKLIST_UIDS = FALLBACK_UIDS;
             DATA_SOURCE = '备用数据';
             console.log(`⚠️ 使用内置备用数据: ${FALLBACK_UIDS.length} 条`);
         }
+        syncBlacklistUidSet();
 
         // 创建悬浮按钮
         createFloatingButton();
