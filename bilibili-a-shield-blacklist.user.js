@@ -21,8 +21,8 @@
 
     // ==================== 配置 ====================
     const CONFIG = {
-        BATCH_INTERVAL: 1000,
-        BATCH_SIZE: 100,
+        BATCH_INTERVAL: 2000,
+        BATCH_SIZE: 10,
         // 存储键名
         STORAGE_KEY: 'bilibili_blacklist_progress',
         // 黑名单公示页（浏览器打开）
