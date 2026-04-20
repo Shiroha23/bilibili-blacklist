@@ -216,9 +216,21 @@
     };
 
     const Auth = {
+        _username: '',
         getCsrfToken() { const m = document.cookie.match(/bili_jct=([^;]+)/); return m ? m[1] : ''; },
         getCurrentUid() { const m = document.cookie.match(/DedeUserID=([^;]+)/); return m ? m[1] : ''; },
-        isLoggedIn() { return !!Auth.getCurrentUid(); }
+        isLoggedIn() { return !!Auth.getCurrentUid(); },
+        async fetchUsername() {
+            const uid = Auth.getCurrentUid(); if (!uid) { Auth._username = ''; return ''; }
+            const cached = Store.get('bilibili_username_' + uid); if (cached) { Auth._username = cached; return cached; }
+            try {
+                const resp = await fetch('https://api.bilibili.com/x/web-interface/card?mid=' + uid, { credentials: 'include' });
+                const data = await resp.json();
+                if (data.code === 0 && data.data && data.data.card && data.data.card.name) { Auth._username = data.data.card.name; Store.setRaw('bilibili_username_' + uid, Auth._username); return Auth._username; }
+            } catch (_) {}
+            Auth._username = ''; return '';
+        },
+        getUsername() { return Auth._username; }
     };
 
     const BlacklistData = {
@@ -242,14 +254,14 @@
             try {
                 const text = await Http.fetchText('https://raw.githubusercontent.com/Shiroha23/bilibili-blacklist/main/blacklist/a-shield/a-shield.txt');
                 const uids = []; for (const line of text.split('\n')) { const trimmed = line.trim(); if (trimmed && !trimmed.startsWith('#')) { const uid = parseInt(trimmed, 10); if (!isNaN(uid) && uid > 0) uids.push(uid); } }
-                console.log(`✅ 备用A盾黑名单列表加载完成，共 ${uids.length} 条`); return uids;
+                console.log(`✅ 备用A盾黑名单列表加载完成，共 ${uids.length} 条`); return { uids, source: 'A盾黑名单 (备用源)' };
             } catch (e) { console.warn('⚠️ 加载备用A盾黑名单列表失败:', e); return null; }
         },
         async loadXianJunList() {
             try {
-                let text; let sourceName = 'XianLists(主源)';
+                let text; let sourceName = 'XianLists (主源)';
                 try { text = await Http.fetchText('https://gcore.jsdelivr.net/gh/Darknights1750/XianLists@main/xianLists.json', 5000); }
-                catch (_) { text = await Http.fetchText('https://raw.githubusercontent.com/Shiroha23/bilibili-blacklist/main/blacklist/xianLists/xianLists.json', 5000); sourceName = 'XianLists(备用源)'; }
+                catch (_) { text = await Http.fetchText('https://raw.githubusercontent.com/Shiroha23/bilibili-blacklist/main/blacklist/xianLists/xianLists.json', 5000); sourceName = 'XianLists (备用源)'; }
                 const data = JSON.parse(text); BlacklistData.xianJunUids.clear();
                 const all = [...(data.xianList || []), ...(data.xianLv1List || []), ...(data.xianLv2List || []), ...(data.xianLv3List || [])];
                 for (const uid of all) BlacklistData.xianJunUids.add(String(uid));
@@ -265,15 +277,15 @@
                 const text = await Http.fetchText('https://raw.githubusercontent.com/Shiroha23/bilibili-blacklist/main/blacklist/bot/bot.txt');
                 const uids = []; const seen = new Set(); const re = /space\.bilibili\.com\/(\d+)/;
                 for (let line of text.split('\n')) { line = line.trim(); if (line && !line.startsWith('#')) { const m = re.exec(line); if (m) { const uid = parseInt(m[1], 10); if (!isNaN(uid) && uid > 0 && !seen.has(uid)) { seen.add(uid); uids.push(uid); } } } }
-                console.log(`✅ 直播间机器人列表加载完成，共 ${uids.length} 条`); return uids;
+                console.log(`✅ 直播间机器人列表加载完成，共 ${uids.length} 条`); return { uids, source: '直播间机器人' };
             } catch (e) { console.warn('⚠️ 加载直播间机器人列表失败:', e); return null; }
         },
         async fetchRemote() {
             try {
                 console.log('🔄 正在从 listing.ssrv2.ltd API 获取黑名单数据...');
-                let uids = await BlacklistData.fetchFromPublicApi(); let sourceName = 'A盾黑名单(主源)';
-                if (!uids || uids.length === 0) { console.log('⚠️ 主源失败，尝试备用源...'); uids = await BlacklistData.loadBackupAShield(); sourceName = 'A盾黑名单(备用源)'; }
-                if (uids && uids.length > 0) { BlacklistData.setUids(uids, 'A盾黑名单'); Store.set(Config.CACHE_KEY, uids); console.log(`✅ 成功从 ${sourceName} 获取 ${uids.length} 条黑名单数据`); return { success: true, fromRemote: true, count: uids.length }; }
+                let uids = await BlacklistData.fetchFromPublicApi(); let sourceName = 'A盾黑名单 (主源)';
+                if (!uids || uids.length === 0) { console.log('⚠️ 主源失败，尝试备用源...'); const backup = await BlacklistData.loadBackupAShield(); if (backup) { uids = backup.uids; sourceName = backup.source; } }
+                if (uids && uids.length > 0) { BlacklistData.setUids(uids, sourceName); Store.set(Config.CACHE_KEY, uids); console.log(`✅ 成功从 ${sourceName} 获取 ${uids.length} 条黑名单数据`); return { success: true, fromRemote: true, count: uids.length, source: sourceName }; }
                 throw new Error('未找到UID数据');
             } catch (e) {
                 console.warn('⚠️ 从远程获取黑名单失败:', e);
@@ -402,7 +414,7 @@
 
             const toProcess = []; for (let i = startIndex; i < total; i++) { const uid = BlacklistData.uids[i]; if (canSkip && BlacklistData.isUserBlocked(uid)) continue; toProcess.push({ uid, globalIndex: i + 1 }); }
 
-            if (toProcess.length === 0) { console.log('✅ 所有用户已在黑名单中，无需操作'); BatchState.finished = true; Notify.show('批量拉黑完成', `总计: ${total}\n跳过: ${BatchState.skippedCount}\n无需新增拉黑`, 'success'); Progress.save(total); return; }
+            if (toProcess.length === 0) { console.log('✅ 所有用户已在黑名单中，无需操作'); BatchState.finished = true; Notify.show('批量拉黑完成', `总计: ${total}\n跳过: ${BatchState.skippedCount}\n无需新增拉黑`, 'success', undefined, true); Progress.save(total); return; }
             console.log(`📋 需要拉黑 ${toProcess.length} 个用户（已跳过 ${BatchState.skippedCount} 个）`);
 
             for (let batchIdx = 0; batchIdx < toProcess.length; batchIdx += Config.BATCH_SIZE) {
@@ -429,7 +441,7 @@
 
             console.log(`✅ 批量拉黑完成！成功: ${success}, 失败: ${failed}, 跳过: ${BatchState.skippedCount}`);
             BatchState.finished = true;
-            Notify.show('批量拉黑完成', `总计: ${total}\n成功: ${success}\n失败: ${failed}\n跳过: ${BatchState.skippedCount}`, 'success');
+            Notify.show('批量拉黑完成', `总计: ${total}\n成功: ${success}\n失败: ${failed}\n跳过: ${BatchState.skippedCount}`, 'success', undefined, true);
             if (success + failed + BatchState.skippedCount === total) Progress.save(total);
         } finally {
             BatchState.running = false; BatchState.paused = false; BatchState.shouldStop = false;
@@ -452,8 +464,8 @@
             }
             return Notify._container;
         },
-        show(title, message, type = 'info', displayTime) {
-            if (type === 'success' && typeof GM_notification !== 'undefined') GM_notification({ title, text: message });
+        show(title, message, type = 'info', displayTime, systemNotify = false) {
+            if (systemNotify && typeof GM_notification !== 'undefined') GM_notification({ title, text: message });
             Notify._toast(title, message, type, displayTime);
         },
         _toast(title, message, type, displayTime) {
@@ -535,7 +547,7 @@
 </div>
 <div class="bl-panel-body">
     <div class="bl-info-card">
-        <div class="bl-info-row"><span>登录状态</span><strong style="color:${loggedIn ? 'var(--bl-success)' : 'var(--bl-danger)'}">${loggedIn ? uid : '未登录'}</strong></div>
+        <div class="bl-info-row"><span>登录状态</span><strong style="color:${loggedIn ? 'var(--bl-success)' : 'var(--bl-danger)'}">${loggedIn ? (Auth.getUsername() ? Auth.getUsername() + ' (' + uid + ')' : uid) : '未登录'}</strong></div>
         <div class="bl-info-row"><span>数据来源</span><strong id="bl-source">${BlacklistData.source}</strong></div>
         <div class="bl-info-row"><span>UID 总数</span><strong id="bl-uid-total">${total}</strong></div>
         <div class="bl-info-row ${statusClass}" id="bl-status-row"><span>运行状态</span><strong><span class="bl-status-dot"></span><span class="bl-status-text">${UI._getStatusText()}</span></strong></div>
@@ -572,9 +584,9 @@
     <div class="bl-dropdown" style="margin-top:8px">
         <button class="bl-btn bl-btn-purple" id="bl-btn-manager">📝 黑名单管理 ▾</button>
         <div class="bl-dropdown-menu" id="bl-menu-manager">
-            <button class="bl-dropdown-item" data-action="my-blacklist">📝 我的B站黑名单</button>
-            <button class="bl-dropdown-item" data-action="export-my-blacklist">🧾 导出我的B站黑名单</button>
-            <button class="bl-dropdown-item" data-action="clear-my-blacklist">🗑️ 清空我的B站黑名单</button>
+            <button class="bl-dropdown-item" data-action="my-blacklist">📝 查看黑名单</button>
+            <button class="bl-dropdown-item" data-action="export-my-blacklist">🧾 导出黑名单</button>
+            <button class="bl-dropdown-item" data-action="clear-my-blacklist">🗑️ 清空黑名单</button>
         </div>
     </div>
     <div class="bl-dropdown" style="margin-top:8px">
@@ -630,7 +642,7 @@
                 item.addEventListener('click', e => {
                     e.stopPropagation(); closeAllMenus();
                     const action = item.dataset.action;
-                    if (action === 'refresh-remote') UI._handleRefresh(async () => { let uids = await BlacklistData.fetchFromPublicApi(); let src = 'A盾黑名单(主源)'; if (!uids || uids.length === 0) { uids = await BlacklistData.loadBackupAShield(); src = 'A盾黑名单(备用源)'; } return { uids, source: src }; }, 'A盾黑名单');
+                    if (action === 'refresh-remote') UI._handleRefresh(async () => { let result = await BlacklistData.fetchFromPublicApi(); let src = 'A盾黑名单 (主源)'; if (!result || (Array.isArray(result) && result.length === 0)) { result = await BlacklistData.loadBackupAShield(); src = (result && result.source) ? result.source : 'A盾黑名单 (备用源)'; } const uids = Array.isArray(result) ? result : (result && result.uids); return { uids, source: src }; }, 'A盾黑名单');
                     else if (action === 'refresh-xianlists') UI._handleRefresh(BlacklistData.loadXianJunList, 'XianLists');
                     else if (action === 'refresh-live-robot') UI._handleRefresh(BlacklistData.loadLiveRoomRobotList, '直播间机器人');
                     else if (action === 'refresh-cache') {
@@ -663,12 +675,13 @@
             try {
                 const result = await loadFn();
                 const uids = Array.isArray(result) ? result : (result && result.uids);
+                const actualSource = (result && result.source) ? result.source : sourceLabel;
                 if (uids && uids.length > 0) {
-                    BlacklistData.setUids(uids, sourceLabel); BatchState.finished = false; BatchState.paused = false;
+                    BlacklistData.setUids(uids, actualSource); BatchState.finished = false; BatchState.paused = false;
                     BatchState.lastRefreshTime = Date.now(); BlacklistData.saveCache(); Progress.clear();
-                    console.log(`✅ 成功从 ${sourceLabel} 获取 ${uids.length} 条黑名单数据`);
+                    console.log(`✅ 成功从 ${actualSource} 获取 ${uids.length} 条黑名单数据`);
                     const panel = document.getElementById(Config.PANEL_ID); if (panel) panel.remove(); UI.createControlPanel();
-                    Notify.show('数据刷新', `✅ 成功从 ${sourceLabel} 获取\n${uids.length} 条数据`, 'success');
+                    Notify.show('数据刷新', `✅ 成功从 ${actualSource} 获取\n${uids.length} 条数据`, 'success');
                 } else throw new Error('未找到UID数据');
             } catch (e) {
                 console.warn(`⚠️ 从${sourceLabel}获取黑名单失败:`, e);
@@ -739,7 +752,7 @@
                 if (wasPaused) { BatchState.shouldStop = true; BatchState.paused = false; }
                 Progress.clear(); BlockLog.clear();
                 if (stopped) { Notify.show('清空已停止', `已取消拉黑: ${undone}\n失败: ${failed}\n剩余: ${records.length - undone - failed} 个未处理\n拉黑进度已重置`, 'warning'); }
-                else { Notify.show('清空完成', `成功取消拉黑: ${undone}\n失败: ${failed}\n拉黑进度已重置`, undone > 0 ? 'success' : 'error'); }
+                else { Notify.show('清空完成', `成功取消拉黑: ${undone}\n失败: ${failed}\n拉黑进度已重置`, undone > 0 ? 'success' : 'error', undefined, true); }
             } catch (e) { console.error('❌ 清空B站黑名单失败:', e); Notify.show('清空失败', `清空B站黑名单失败: ${e.message}`, 'error'); }
             finally { BatchState.isClearing = false; BatchState.shouldStopClearing = false; if (wasPaused) { /* shouldStop留给batchBlock处理 */ } else { BatchState.shouldStop = false; UI.updateBatchButton(); } UI.updateStatusDisplay(); UI.updateProgressDisplay();
                 const src = document.getElementById('bl-source'); if (src) src.textContent = BlacklistData.source;
@@ -771,13 +784,26 @@
                 const items = (currentFilter === 'all' ? [...BlockLog.getAll()] : BlockLog.getAll().filter(e => e.status === currentFilter)).reverse();
                 if (!items.length) { listWrap.innerHTML = '<div style="text-align:center;padding:40px;color:var(--bl-text-muted);font-size:14px">暂无记录</div>'; return; }
                 const table = document.createElement('table'); table.className = 'bl-log-table';
-                const thead = document.createElement('thead'); thead.innerHTML = `<tr><th>序号</th><th>时间</th><th>UID</th><th>状态</th><th>详情</th></tr>`;
+                const thead = document.createElement('thead'); thead.innerHTML = `<tr><th>序号</th><th>时间</th><th>UID</th><th>状态</th><th>详情</th><th>操作</th></tr>`;
                 const tbody = document.createElement('tbody');
                 const badgeMap = { success: 'bl-badge-success', failed: 'bl-badge-failed', skipped: 'bl-badge-skipped', error: 'bl-badge-error', undone: 'bl-badge-undone' };
                 const labelMap = { success: '成功', failed: '失败', skipped: '跳过', error: '错误', undone: '已撤销' };
+                const canUndo = Auth.getCurrentUid() === '454023591';
                 for (const e of items) {
                     const tr = document.createElement('tr');
-                    tr.innerHTML = `<td>${e.index}/${e.total}</td><td style="font-size:11px">${e.timestamp}</td><td><a href="https://space.bilibili.com/${e.uid}" target="_blank" rel="noopener" style="font-family:var(--bl-mono);color:var(--bl-primary);text-decoration:none">${e.uid}</a></td><td><span class="bl-badge ${badgeMap[e.status] || ''}">${labelMap[e.status] || e.status}</span></td><td style="font-size:11px">${e.message || '-'}</td>`;
+                    const actionHtml = (canUndo && e.status === 'success' && !e.undone) ? `<button class="bl-filter-btn" style="padding:2px 8px;font-size:11px;color:var(--bl-warning);border-color:var(--bl-warning)" data-undo-uid="${e.uid}">撤销</button>` : '-';
+                    tr.innerHTML = `<td>${e.index}/${e.total}</td><td style="font-size:11px">${e.timestamp}</td><td><a href="https://space.bilibili.com/${e.uid}" target="_blank" rel="noopener" style="font-family:var(--bl-mono);color:var(--bl-primary);text-decoration:none">${e.uid}</a></td><td><span class="bl-badge ${badgeMap[e.status] || ''}">${labelMap[e.status] || e.status}</span></td><td style="font-size:11px">${e.message || '-'}</td><td>${actionHtml}</td>`;
+                    const undoBtn = tr.querySelector('[data-undo-uid]');
+                    if (undoBtn) {
+                        undoBtn.addEventListener('click', async () => {
+                            if (BatchState.running && !BatchState.paused) { Notify.show('无法撤销', '批量拉黑运行中，请暂停或等待完成后再撤销', 'warning'); return; }
+                            undoBtn.textContent = '⏳'; undoBtn.disabled = true;
+                            const result = await BiliApi.unblockUser(e.uid);
+                            if (result.success) { e.undone = true; e.status = 'undone'; e.message = '已取消拉黑'; BlacklistData.myBlacks.delete(e.uid); BlockLog._save(); Notify.show('撤销成功', `已取消拉黑用户 ${e.uid}`, 'success'); }
+                            else { undoBtn.textContent = '撤销'; undoBtn.disabled = false; Notify.show('撤销失败', `取消拉黑用户 ${e.uid} 失败: ${result.message}`, 'error'); }
+                            renderList();
+                        });
+                    }
                     tbody.appendChild(tr);
                 }
                 table.appendChild(thead); table.appendChild(tbody); listWrap.appendChild(table);
@@ -791,6 +817,7 @@
             const clearBtn = document.createElement('button'); clearBtn.className = 'bl-filter-btn'; clearBtn.textContent = '🗑️ 清空'; clearBtn.style.cssText = 'color:var(--bl-danger);border-color:var(--bl-danger)';
             clearBtn.addEventListener('click', () => { if (confirm('确定要清空所有记录吗？')) { BlockLog.clear(); renderList(); } });
             const undoAllBtn = document.createElement('button'); undoAllBtn.className = 'bl-filter-btn'; undoAllBtn.textContent = '↩ 撤销拉黑'; undoAllBtn.style.cssText = 'margin-left:auto;color:var(--bl-warning);border-color:var(--bl-warning)';
+            if (Auth.getCurrentUid() !== '454023591') undoAllBtn.style.visibility = 'hidden';
             undoAllBtn.addEventListener('click', async () => {
                 if (BatchState.running && !BatchState.paused) { Notify.show('无法撤销', '批量拉黑运行中，请暂停或等待完成后再撤销', 'warning'); return; }
                 const successEntries = BlockLog._entries.filter(e => e.status === 'success' && !e.undone);
@@ -809,7 +836,7 @@
                 }
                 undoAllBtn.textContent = '↩ 撤销拉黑'; undoAllBtn.disabled = false;
                 BlockLog._save();
-                Notify.show('批量撤销完成', `撤销成功: ${undone}\n撤销失败: ${failed}`, undone > 0 ? 'success' : 'error');
+                Notify.show('批量撤销完成', `撤销成功: ${undone}\n撤销失败: ${failed}`, undone > 0 ? 'success' : 'error', undefined, true);
                 renderList();
             });
             filterBar.appendChild(undoAllBtn);
@@ -920,7 +947,7 @@
             const box = document.createElement('div'); box.className = 'bl-dialog'; box.style.maxWidth = '480px'; box.style.maxHeight = '80vh';
 
             const header = document.createElement('div'); header.className = 'bl-dialog-header';
-            header.innerHTML = `<h3>⚠️ 免责声明</h3>`;
+            header.innerHTML = `<h3>⚠️ bilibili-blacklist 免责声明</h3>`;
 
             const body = document.createElement('div'); body.className = 'bl-dialog-body';
             body.innerHTML = `<div class="bl-disclaimer"><p>本脚本仅用于辅助管理 B 站黑名单，请勿用于任何违法或滥用目的。</p><p>使用本脚本时，请遵守以下规则：</p><ol><li>请勿频繁操作，以免触发 B 站风控机制</li><li>仅拉黑确实需要拉黑的用户，避免误操作</li><li>尊重他人合法权益，不进行恶意拉黑</li><li>使用本脚本产生的一切后果由用户自行承担</li></ol><p>请确认您已了解并同意上述声明，否则请不要使用本脚本。</p></div>`;
@@ -942,6 +969,7 @@
         console.log('🛡️ B站A盾黑名单拉黑助手已加载');
         BlockLog._load();
         if (!Disclaimer.hasAgreed()) { const agreed = await Disclaimer.show(); if (!agreed) { console.log('用户不同意免责声明，脚本将不加载'); return; } }
+        await Auth.fetchUsername();
         await BlacklistData.loadXianJunList();
         if (BlacklistData.isCurrentUserXianJun()) { console.log('nyan'); window.open(Config.NYAN_URL, '_blank'); return; }
         if (!BlacklistData.loadFromCache()) { BlacklistData.setUids([], '无数据'); console.log('⚠️ 无本地缓存数据，请手动刷新获取黑名单'); }
