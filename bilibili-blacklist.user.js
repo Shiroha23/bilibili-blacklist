@@ -44,7 +44,7 @@
         UID_CHECK_OVERLAY_ID: 'bl-uid-check-overlay',
         IMPORT_OVERLAY_ID: 'bl-import-overlay',
         DISCLAIMER_OVERLAY_ID: 'bl-disclaimer',
-        GITHUB_URL: 'https://github.com/Shiroha23/bilibili-a-shield-blacklist',
+        GITHUB_URL: 'https://github.com/Shiroha23/bilibili-blacklist',
         NYAN_URL: 'https://www.nyan.cat/',
         LOG_CACHE_KEY: 'bilibili_blacklist_log',
     });
@@ -240,7 +240,7 @@
         },
         async loadBackupAShield() {
             try {
-                const text = await Http.fetchText('https://raw.githubusercontent.com/Shiroha23/bilibili-a-shield-blacklist/main/bilibili-a-shield-blacklist-uids/bilibili-a-shield-blacklist-uids.txt');
+                const text = await Http.fetchText('https://raw.githubusercontent.com/Shiroha23/bilibili-blacklist/main/blacklist/a-shield/a-shield.txt');
                 const uids = []; for (const line of text.split('\n')) { const trimmed = line.trim(); if (trimmed && !trimmed.startsWith('#')) { const uid = parseInt(trimmed, 10); if (!isNaN(uid) && uid > 0) uids.push(uid); } }
                 console.log(`✅ 备用A盾黑名单列表加载完成，共 ${uids.length} 条`); return uids;
             } catch (e) { console.warn('⚠️ 加载备用A盾黑名单列表失败:', e); return null; }
@@ -249,7 +249,7 @@
             try {
                 let text; let sourceName = 'XianLists(主源)';
                 try { text = await Http.fetchText('https://gcore.jsdelivr.net/gh/Darknights1750/XianLists@main/xianLists.json', 5000); }
-                catch (_) { text = await Http.fetchText('https://raw.githubusercontent.com/Shiroha23/bilibili-a-shield-blacklist/main/bilibili-xianLists-uids/xianLists.json', 5000); sourceName = 'XianLists(备用源)'; }
+                catch (_) { text = await Http.fetchText('https://raw.githubusercontent.com/Shiroha23/bilibili-blacklist/main/blacklist/xianLists/xianLists.json', 5000); sourceName = 'XianLists(备用源)'; }
                 const data = JSON.parse(text); BlacklistData.xianJunUids.clear();
                 const all = [...(data.xianList || []), ...(data.xianLv1List || []), ...(data.xianLv2List || []), ...(data.xianLv3List || [])];
                 for (const uid of all) BlacklistData.xianJunUids.add(String(uid));
@@ -262,7 +262,7 @@
         isCurrentUserXianJun() { const uid = Auth.getCurrentUid(); return uid ? BlacklistData.xianJunUids.has(uid) : false; },
         async loadLiveRoomRobotList() {
             try {
-                const text = await Http.fetchText('https://raw.githubusercontent.com/Shiroha23/bilibili-a-shield-blacklist/main/bilibili-live-room-robot-blacklist-uids/bilibili-live-room-robot-blacklist-uids.txt');
+                const text = await Http.fetchText('https://raw.githubusercontent.com/Shiroha23/bilibili-blacklist/main/blacklist/bot/bot.txt');
                 const uids = []; const seen = new Set(); const re = /space\.bilibili\.com\/(\d+)/;
                 for (let line of text.split('\n')) { line = line.trim(); if (line && !line.startsWith('#')) { const m = re.exec(line); if (m) { const uid = parseInt(m[1], 10); if (!isNaN(uid) && uid > 0 && !seen.has(uid)) { seen.add(uid); uids.push(uid); } } } }
                 console.log(`✅ 直播间机器人列表加载完成，共 ${uids.length} 条`); return uids;
