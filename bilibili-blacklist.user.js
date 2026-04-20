@@ -89,8 +89,8 @@
 .bl-progress-label{display:flex;justify-content:space-between;font-size:12px;color:var(--bl-text-secondary);margin-bottom:6px}
 .bl-progress-label strong{color:var(--bl-primary);font-weight:600}
 .bl-progress-bar{height:8px;background:var(--bg-active,#e3e5e7);border-radius:4px;overflow:hidden;position:relative}
-.bl-progress-fill{height:100%;border-radius:4px;background:linear-gradient(90deg,var(--bl-primary),#00b5e5);transition:width .4s cubic-bezier(.4,0,.2,1);position:relative}
-.bl-progress-fill.bl-active{background-image:linear-gradient(45deg,rgba(255,255,255,.15) 25%,transparent 25%,transparent 50%,rgba(255,255,255,.15) 50%,rgba(255,255,255,.15) 75%,transparent 75%);background-size:40px 40px;animation:bl-progress-stripe .8s linear infinite}
+.bl-progress-fill{height:100%;border-radius:4px;background:linear-gradient(90deg,var(--bl-primary),#00b5e5);transition:width .4s cubic-bezier(.4,0,.2,1);position:relative;overflow:hidden}
+.bl-progress-fill.bl-active::after{content:'';position:absolute;inset:0;background-image:linear-gradient(45deg,rgba(255,255,255,.15) 25%,transparent 25%,transparent 50%,rgba(255,255,255,.15) 50%,rgba(255,255,255,.15) 75%,transparent 75%);background-size:40px 40px;animation:bl-progress-stripe .8s linear infinite}
 
 .bl-section-label{font-size:11px;color:var(--bl-text-muted);text-transform:uppercase;letter-spacing:1px;margin:10px 0 6px;font-weight:600}
 
@@ -119,7 +119,7 @@
 .bl-dropdown-item:hover{background:var(--bl-bg-hover);color:var(--bl-text)}
 .bl-dropdown-item+.bl-dropdown-item{border-top:1px solid var(--bl-border)}
 
-.bl-tip-stack{position:fixed;top:120px;right:356px;z-index:100002;display:flex;flex-direction:column;gap:8px;overflow-y:auto;pointer-events:none;scrollbar-width:none}
+.bl-tip-stack{position:fixed;top:120px;right:356px;z-index:100002;display:flex;flex-direction:column;gap:8px;overflow-y:auto;pointer-events:none;scrollbar-width:none;align-items:flex-end}
 .bl-tip-stack::-webkit-scrollbar{display:none}
 .bl-tip{background:var(--bl-bg);border-radius:var(--bl-radius);box-shadow:var(--bl-shadow-lg);font-family:var(--bl-font);max-width:300px;animation:bl-slide-in .3s cubic-bezier(.4,0,.2,1);border:1px solid var(--bl-border);overflow:hidden;pointer-events:auto;flex-shrink:0}
 .bl-tip-title{padding:10px 14px 4px;font-weight:600;font-size:13px;color:var(--bl-text)}
@@ -367,10 +367,11 @@
     };
 
     const BatchState = {
-        running: false, paused: false, finished: false, shouldStop: false, isRefreshing: false, lastRefreshTime: 0, skippedCount: 0,
-        reset() { BatchState.running = false; BatchState.paused = false; BatchState.finished = false; BatchState.shouldStop = false; BatchState.skippedCount = 0; },
+        running: false, paused: false, finished: false, shouldStop: false, isRefreshing: false, isClearing: false, shouldStopClearing: false, lastRefreshTime: 0, skippedCount: 0,
+        reset() { BatchState.running = false; BatchState.paused = false; BatchState.finished = false; BatchState.shouldStop = false; BatchState.isClearing = false; BatchState.shouldStopClearing = false; BatchState.skippedCount = 0; },
         canStart(actionLabel) {
             if (BatchState.isRefreshing) { Notify.show('操作被阻止', `${actionLabel}前请等待数据刷新完成`, 'warning'); return false; }
+            if (BatchState.isClearing) { Notify.show('操作被阻止', `${actionLabel}前请等待清空黑名单完成`, 'warning'); return false; }
             if (BatchState.running && !BatchState.paused) { Notify.show('操作被阻止', `${actionLabel}前请先暂停或等待当前批量拉黑结束`, 'warning'); return false; }
             return true;
         }
@@ -441,13 +442,13 @@
         _getContainer() {
             if (!Notify._container || !document.body.contains(Notify._container)) {
                 Notify._container = document.createElement('div'); Notify._container.className = 'bl-tip-stack bl-root';
+                const panel = document.getElementById(Config.PANEL_ID);
+                if (panel) {
+                    const panelBottom = panel.getBoundingClientRect().bottom;
+                    const stackTop = 120;
+                    Notify._container.style.maxHeight = Math.max(0, panelBottom - stackTop) + 'px';
+                }
                 document.body.appendChild(Notify._container);
-            }
-            const panel = document.getElementById(Config.PANEL_ID);
-            if (panel) {
-                const panelBottom = panel.getBoundingClientRect().bottom;
-                const stackTop = 120;
-                Notify._container.style.maxHeight = Math.max(0, panelBottom - stackTop) + 'px';
             }
             return Notify._container;
         },
@@ -475,13 +476,13 @@
     const UI = {
         ensureStyle() { if (document.getElementById(Config.STYLE_ID)) return; const style = document.createElement('style'); style.id = Config.STYLE_ID; style.textContent = CSS; document.head.appendChild(style); },
 
-        _getStatusClass() { return BatchState.running ? (BatchState.paused ? 'bl-status-paused' : 'bl-status-running') : (BatchState.finished ? 'bl-status-done' : 'bl-status-idle'); },
-        _getStatusText() { return BatchState.running ? (BatchState.paused ? '已暂停' : '运行中') : (BatchState.finished ? '已完成' : '待运行'); },
+        _getStatusClass() { if (BatchState.isClearing) return 'bl-status-running'; return BatchState.running ? (BatchState.paused ? 'bl-status-paused' : 'bl-status-running') : (BatchState.finished ? 'bl-status-done' : 'bl-status-idle'); },
+        _getStatusText() { if (BatchState.isClearing) return '清空中'; return BatchState.running ? (BatchState.paused ? '已暂停' : '运行中') : (BatchState.finished ? '已完成' : '待运行'); },
 
         updateStatusDisplay() {
             const el = document.getElementById('bl-status-row'); if (!el) return;
             el.className = 'bl-info-row ' + UI._getStatusClass();
-            const dot = el.querySelector('.bl-status-dot'); if (dot) dot.style.background = BatchState.running ? (BatchState.paused ? 'var(--bl-warning)' : 'var(--bl-success)') : (BatchState.finished ? 'var(--bl-cyan)' : 'var(--bl-text-muted)');
+            const dot = el.querySelector('.bl-status-dot'); if (dot) dot.style.background = BatchState.isClearing ? 'var(--bl-success)' : (BatchState.running ? (BatchState.paused ? 'var(--bl-warning)' : 'var(--bl-success)') : (BatchState.finished ? 'var(--bl-cyan)' : 'var(--bl-text-muted)'));
             const text = el.querySelector('.bl-status-text'); if (text) text.textContent = UI._getStatusText();
         },
 
@@ -494,7 +495,10 @@
 
         updateBatchButton() {
             const btn = document.getElementById('bl-btn-batch'); if (!btn) return;
-            if (!BatchState.running) {
+            if (BatchState.isClearing) {
+                btn.className = 'bl-btn bl-btn-danger';
+                btn.innerHTML = '⏹️ 停止清空';
+            } else if (!BatchState.running) {
                 const p = Progress.get();
                 btn.className = 'bl-btn bl-btn-primary';
                 btn.innerHTML = BatchState.finished ? '🔄 重新批量拉黑' : (p > 0 ? '▶️ 继续批量拉黑' : '▶️ 开始批量拉黑');
@@ -532,12 +536,12 @@
 <div class="bl-panel-body">
     <div class="bl-info-card">
         <div class="bl-info-row"><span>登录状态</span><strong style="color:${loggedIn ? 'var(--bl-success)' : 'var(--bl-danger)'}">${loggedIn ? uid : '未登录'}</strong></div>
-        <div class="bl-info-row"><span>数据来源</span><strong>${BlacklistData.source}</strong></div>
-        <div class="bl-info-row"><span>UID 总数</span><strong>${total}</strong></div>
+        <div class="bl-info-row"><span>数据来源</span><strong id="bl-source">${BlacklistData.source}</strong></div>
+        <div class="bl-info-row"><span>UID 总数</span><strong id="bl-uid-total">${total}</strong></div>
         <div class="bl-info-row ${statusClass}" id="bl-status-row"><span>运行状态</span><strong><span class="bl-status-dot"></span><span class="bl-status-text">${UI._getStatusText()}</span></strong></div>
     </div>
     <div class="bl-progress-wrap">
-        <div class="bl-progress-label"><span>拉黑进度</span><span><strong id="bl-progress-pct">${pct}%</strong> · <span id="bl-progress-num">${progress} / ${total}</span></span></div>
+        <div class="bl-progress-label"><span>运行进度</span><span><strong id="bl-progress-pct">${pct}%</strong> · <span id="bl-progress-num">${progress} / ${total}</span></span></div>
         <div class="bl-progress-bar"><div class="bl-progress-fill${BatchState.running && !BatchState.paused ? ' bl-active' : ''}" id="bl-progress-fill" style="width:${pct}%"></div></div>
     </div>
     <div class="bl-section-label">操作</div>
@@ -570,6 +574,7 @@
         <div class="bl-dropdown-menu" id="bl-menu-manager">
             <button class="bl-dropdown-item" data-action="my-blacklist">📝 我的B站黑名单</button>
             <button class="bl-dropdown-item" data-action="export-my-blacklist">🧾 导出我的B站黑名单</button>
+            <button class="bl-dropdown-item" data-action="clear-my-blacklist">🗑️ 清空我的B站黑名单</button>
         </div>
     </div>
     <div class="bl-dropdown" style="margin-top:8px">
@@ -597,6 +602,11 @@
             document.getElementById('bl-btn-close').addEventListener('click', () => { panel.classList.add('bl-closing'); panel.addEventListener('animationend', () => { panel.remove(); UI.createFloatingButton(); }, { once: true }); });
 
             document.getElementById('bl-btn-batch').addEventListener('click', () => {
+                if (BatchState.isClearing) {
+                    BatchState.shouldStopClearing = true;
+                    Notify.show('正在停止', '正在停止清空黑名单...', 'warning');
+                    return;
+                }
                 if (!BatchState.running) {
                     if (!BatchState.canStart('开始批量拉黑')) return;
                     if (!Auth.isLoggedIn()) { alert('请先登录B站账号！'); return; }
@@ -633,6 +643,7 @@
                     else if (action === 'export-uids') UI.exportBlacklistUids();
                     else if (action === 'my-blacklist') window.open('https://account.bilibili.com/account/blacklist', '_blank');
                     else if (action === 'export-my-blacklist') UI.exportMyBilibiliBlacklist();
+                    else if (action === 'clear-my-blacklist') UI.clearMyBilibiliBlacklist();
                     else if (action === 'github') window.open(Config.GITHUB_URL, '_blank');
                     else if (action === 'bilibili') window.open('https://space.bilibili.com/454023591', '_blank');
                 });
@@ -666,6 +677,7 @@
         },
 
         exportBlacklistUids() {
+            if (BatchState.isClearing) { Notify.show('操作被阻止', '清空黑名单中，请等待完成后再导出 UID', 'warning'); return; }
             if (!BlacklistData.uids.length) { alert('当前没有可导出的 UID'); return; }
             const blob = new Blob([BlacklistData.uids.join('\n')], { type: 'text/plain;charset=utf-8' });
             const url = URL.createObjectURL(blob); const a = document.createElement('a');
@@ -675,6 +687,7 @@
         },
 
         async exportMyBilibiliBlacklist() {
+            if (BatchState.isClearing) { Notify.show('操作被阻止', '清空黑名单中，请等待完成后再导出', 'warning'); return; }
             if (!Auth.isLoggedIn()) { alert('请先登录B站账号！'); return; }
             try {
                 const records = await BiliApi.fetchAllMyBlacks(); if (!records.length) { alert('当前账号黑名单为空，未导出文件。'); return; }
@@ -684,6 +697,54 @@
                 a.style.display = 'none'; document.body.appendChild(a); a.click(); document.body.removeChild(a); URL.revokeObjectURL(url);
                 Notify.show('导出成功', `已导出你账号黑名单 ${records.length} 条 UID`, 'success');
             } catch (e) { console.error('❌ 导出 B站账号黑名单失败:', e); alert(`导出失败：${e && e.message ? e.message : '未知错误'}`); }
+        },
+
+        async clearMyBilibiliBlacklist() {
+            if (!Auth.isLoggedIn()) { alert('请先登录B站账号！'); return; }
+            if (BatchState.running && !BatchState.paused) { Notify.show('操作被阻止', '批量拉黑运行中，请暂停或等待完成后再清空黑名单', 'warning'); return; }
+            if (!confirm('确定要清空你的B站黑名单吗？此操作不可撤销！')) return;
+            const wasPaused = BatchState.running && BatchState.paused;
+            if (wasPaused) { if (!confirm('当前批量拉黑已暂停，清空黑名单后将终止当前任务并重置进度。确定？')) return; }
+            BatchState.isClearing = true;
+            UI.updateBatchButton(); UI.updateStatusDisplay();
+            try {
+                Notify.show('正在加载', '正在获取你的B站黑名单...', 'info');
+                const records = await BiliApi.fetchAllMyBlacks();
+                if (!records.length) { Notify.show('无需清空', '你的B站黑名单已经是空的', 'info'); return; }
+                if (!confirm(`你的B站黑名单共有 ${records.length} 个用户，确定要全部取消拉黑吗？`)) return;
+                const origSource = document.getElementById('bl-source');
+                const origTotal = document.getElementById('bl-uid-total');
+                if (origSource) origSource.textContent = '用户黑名单';
+                if (origTotal) origTotal.textContent = String(records.length);
+                const fillInit = document.getElementById('bl-progress-fill'); if (fillInit) { fillInit.style.width = '0%'; fillInit.className = 'bl-progress-fill bl-active'; }
+                const numInit = document.getElementById('bl-progress-num'); if (numInit) numInit.textContent = `0 / ${records.length}`;
+                const pctInit = document.getElementById('bl-progress-pct'); if (pctInit) pctInit.textContent = '0%';
+                let undone = 0, failed = 0;
+                Notify.show('清空中', `正在清空 ${records.length} 个用户的拉黑...`, 'info');
+                for (let i = 0; i < records.length; i += Config.BATCH_SIZE) {
+                    if (BatchState.shouldStopClearing) { console.log('🛑 清空黑名单被停止'); break; }
+                    const batch = records.slice(i, i + Config.BATCH_SIZE);
+                    const results = await Promise.all(batch.map(item => BiliApi.unblockUser(item.uid)));
+                    for (const r of results) { if (r.success) undone++; else failed++; }
+                    const processed = undone + failed;
+                    const pct = Math.min(100, (processed / records.length * 100)).toFixed(1);
+                    const fill = document.getElementById('bl-progress-fill'); if (fill) { fill.style.width = pct + '%'; fill.className = 'bl-progress-fill bl-active'; }
+                    const num = document.getElementById('bl-progress-num'); if (num) num.textContent = `${processed} / ${records.length}`;
+                    const pctEl = document.getElementById('bl-progress-pct'); if (pctEl) pctEl.textContent = pct + '%';
+                    Notify.show('清空进度', `已处理: ${processed}/${records.length}\n成功: ${undone}  失败: ${failed}`);
+                    if (i + Config.BATCH_SIZE < records.length && !BatchState.shouldStopClearing) await delay(Config.BATCH_INTERVAL);
+                }
+                const stopped = BatchState.shouldStopClearing;
+                BlacklistData.myBlacks.clear();
+                if (wasPaused) { BatchState.shouldStop = true; BatchState.paused = false; }
+                Progress.clear(); BlockLog.clear();
+                if (stopped) { Notify.show('清空已停止', `已取消拉黑: ${undone}\n失败: ${failed}\n剩余: ${records.length - undone - failed} 个未处理\n拉黑进度已重置`, 'warning'); }
+                else { Notify.show('清空完成', `成功取消拉黑: ${undone}\n失败: ${failed}\n拉黑进度已重置`, undone > 0 ? 'success' : 'error'); }
+            } catch (e) { console.error('❌ 清空B站黑名单失败:', e); Notify.show('清空失败', `清空B站黑名单失败: ${e.message}`, 'error'); }
+            finally { BatchState.isClearing = false; BatchState.shouldStopClearing = false; if (wasPaused) { /* shouldStop留给batchBlock处理 */ } else { BatchState.shouldStop = false; UI.updateBatchButton(); } UI.updateStatusDisplay(); UI.updateProgressDisplay();
+                const src = document.getElementById('bl-source'); if (src) src.textContent = BlacklistData.source;
+                const tot = document.getElementById('bl-uid-total'); if (tot) tot.textContent = String(BlacklistData.uids.length);
+            }
         },
 
         showDetailsPanel() {
@@ -737,10 +798,14 @@
                 if (!confirm(`确定要撤销所有 ${successEntries.length} 条拉黑记录吗？（跳过的不会撤销）`)) return;
                 undoAllBtn.textContent = '⏳ 撤销中...'; undoAllBtn.disabled = true;
                 let undone = 0, failed = 0;
-                for (const entry of successEntries) {
-                    const result = await BiliApi.unblockUser(entry.uid);
-                    if (result.success) { entry.undone = true; entry.status = 'undone'; entry.message = '已取消拉黑'; BlacklistData.myBlacks.delete(entry.uid); undone++; }
-                    else { failed++; }
+                for (let i = 0; i < successEntries.length; i += Config.BATCH_SIZE) {
+                    const batch = successEntries.slice(i, i + Config.BATCH_SIZE);
+                    const results = await Promise.all(batch.map(entry => BiliApi.unblockUser(entry.uid)));
+                    for (let j = 0; j < results.length; j++) {
+                        if (results[j].success) { batch[j].undone = true; batch[j].status = 'undone'; batch[j].message = '已取消拉黑'; BlacklistData.myBlacks.delete(batch[j].uid); undone++; }
+                        else { failed++; }
+                    }
+                    if (i + Config.BATCH_SIZE < successEntries.length) await delay(Config.BATCH_INTERVAL);
                 }
                 undoAllBtn.textContent = '↩ 撤销拉黑'; undoAllBtn.disabled = false;
                 BlockLog._save();
