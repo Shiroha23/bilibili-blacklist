@@ -1062,8 +1062,30 @@
                 if (!BatchState.running) {
                     if (!BatchState.canStart('开始批量拉黑')) return;
                     if (!Auth.isLoggedIn()) { alert('请先登录B站账号！'); return; }
-                    if (BatchState.finished) { Progress.clear(); BatchState.finished = false; }
-                    batchBlock(Progress.normalize(Progress.get()));
+                    
+                    const startIndex = Progress.normalize(Progress.get());
+                    const total = BlacklistData.uids.length;
+                    const source = BlacklistData.source;
+                    
+                    if (BatchState.finished) {
+                        Progress.clear();
+                        BatchState.finished = false;
+                    }
+                    
+                    if (total === 0) {
+                        alert('没有可拉黑的UID！请先刷新数据。');
+                        return;
+                    }
+                    
+                    let confirmMsg = `确定要开始批量拉黑吗？\n\n数据来源：${source}\nUID 总数：${total}`;
+                    if (startIndex > 0) {
+                        confirmMsg += `\n\n已完成：${startIndex} / ${total}\n剩余：${total - startIndex} 条`;
+                    }
+                    confirmMsg += '\n\n点击"确定"开始，点击"取消"停止。';
+                    
+                    if (confirm(confirmMsg)) {
+                        batchBlock(startIndex);
+                    }
                 } else {
                     if (BatchState.paused && !BatchState.canStart('继续批量拉黑')) return;
                     BatchState.paused = !BatchState.paused;
@@ -1264,6 +1286,14 @@
             statsLine.style.cssText = 'padding:8px 20px;font-size:12px;color:var(--bl-text-secondary);border-bottom:1px solid var(--bl-border);background:var(--bl-bg-hover)';
             statsLine.innerHTML = `总计: ${stats.total} · <span style="color:var(--bl-success)">成功: ${stats.success}</span> · <span style="color:var(--bl-danger)">失败: ${stats.failed}</span> · <span style="color:var(--bl-cyan)">跳过: ${stats.skipped}</span> · <span style="color:var(--bl-warning)">错误: ${stats.error}</span> · <span style="color:var(--bl-text-muted)">撤销: ${stats.undone}</span>`;
 
+            const progressWrap = document.createElement('div');
+            progressWrap.style.cssText = 'padding:10px 20px;border-bottom:1px solid var(--bl-border);display:none';
+            progressWrap.innerHTML = `
+                <div style="font-size:12px;color:var(--bl-text-secondary);margin-bottom:6px">撤销进度：<span id="bl-details-progress-num">0 / 0</span> (<span id="bl-details-progress-pct">0%</span>)</div>
+                <div class="bl-progress-bar"><div class="bl-progress-fill bl-active" id="bl-details-progress-fill" style="width:0%"></div></div>
+                <div style="font-size:12px;color:var(--bl-text-secondary);margin-top:6px">成功: <span id="bl-details-undone" style="color:var(--bl-success)">0</span> · 失败: <span id="bl-details-failed" style="color:var(--bl-danger)">0</span></div>
+            `;
+
             const filterBar = document.createElement('div');
             filterBar.className = 'bl-filter-bar';
             filterBar.style.cssText = 'padding:10px 20px;border-bottom:1px solid var(--bl-border)';
@@ -1327,26 +1357,56 @@
                 if (!successEntries.length) { Notify.show('无可撤销', '没有可以撤销的拉黑记录', 'warning'); return; }
                 if (!confirm(`确定要撤销所有 ${successEntries.length} 条拉黑记录吗？（跳过的不会撤销）`)) return;
                 undoAllBtn.textContent = '⏳ 撤销中...'; undoAllBtn.disabled = true;
+
+                progressWrap.style.display = 'block';
+                const progressNum = document.getElementById('bl-details-progress-num');
+                const progressPct = document.getElementById('bl-details-progress-pct');
+                const progressFill = document.getElementById('bl-details-progress-fill');
+                const detailUndone = document.getElementById('bl-details-undone');
+                const detailFailed = document.getElementById('bl-details-failed');
+
+                if (progressNum) progressNum.textContent = `0 / ${successEntries.length}`;
+                if (progressPct) progressPct.textContent = '0%';
+                if (progressFill) progressFill.style.width = '0%';
+                if (detailUndone) detailUndone.textContent = '0';
+                if (detailFailed) detailFailed.textContent = '0';
+
                 let undone = 0, failed = 0;
                 for (let i = 0; i < successEntries.length; i += Config.BATCH_SIZE) {
                     const batch = successEntries.slice(i, i + Config.BATCH_SIZE);
                     const results = await Promise.all(batch.map(entry => BiliApi.unblockUser(entry.uid)));
                     for (let j = 0; j < results.length; j++) {
-                        if (results[j].success) { batch[j].undone = true; batch[j].status = 'undone'; batch[j].message = '已取消拉黑'; BlacklistData.myBlacks.delete(batch[j].uid); undone++; }
+                        if (results[j].success) {
+                            batch[j].undone = true; batch[j].status = 'undone'; batch[j].message = '已取消拉黑';
+                            BlacklistData.myBlacks.delete(batch[j].uid); undone++;
+                        }
                         else { failed++; }
                     }
+
+                    const processed = undone + failed;
+                    const pct = Math.min(100, (processed / successEntries.length * 100)).toFixed(1);
+                    if (progressNum) progressNum.textContent = `${processed} / ${successEntries.length}`;
+                    if (progressPct) progressPct.textContent = `${pct}%`;
+                    if (progressFill) progressFill.style.width = `${pct}%`;
+                    if (detailUndone) detailUndone.textContent = undone;
+                    if (detailFailed) detailFailed.textContent = failed;
+
+                    Notify.show('批量撤销进度', `已处理: ${processed}/${successEntries.length}\n成功: ${undone}  失败: ${failed}`);
+                    renderList();
+
                     if (i + Config.BATCH_SIZE < successEntries.length) await delay(Config.BATCH_INTERVAL);
                 }
                 undoAllBtn.textContent = '↩ 撤销拉黑'; undoAllBtn.disabled = false;
                 BlockLog._save();
                 Notify.show('批量撤销完成', `撤销成功: ${undone}\n撤销失败: ${failed}`, undone > 0 ? 'success' : 'error', undefined, true);
+                progressWrap.style.display = 'none';
                 renderList();
             });
             filterBar.appendChild(undoAllBtn);
             filterBar.appendChild(clearBtn);
             renderList();
 
-            box.appendChild(header); box.appendChild(statsLine); box.appendChild(filterBar); box.appendChild(listWrap);
+            box.appendChild(header); box.appendChild(statsLine); box.appendChild(progressWrap); box.appendChild(filterBar); box.appendChild(listWrap);
             overlay.appendChild(box); document.body.appendChild(overlay);
             overlay.addEventListener('click', e => { if (e.target === overlay) overlay.remove(); });
         },
