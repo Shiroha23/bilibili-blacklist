@@ -45,7 +45,6 @@
         IMPORT_OVERLAY_ID: 'bl-import-overlay',
         DISCLAIMER_OVERLAY_ID: 'bl-disclaimer',
         GITHUB_URL: 'https://github.com/Shiroha23/bilibili-blacklist',
-        NYAN_URL: 'https://www.nyan.cat/',
         LOG_CACHE_KEY: 'bilibili_blacklist_log',
     });
 
@@ -253,8 +252,6 @@
         uidSet: new Set(),
         source: '无数据',
         myBlacks: new Set(),
-        xianJunUids: new Set(),
-        xianJunCheckComplete: false,
 
         syncSet() {
             BlacklistData.uidSet = new Set(BlacklistData.uids);
@@ -324,22 +321,15 @@
                     sourceName = 'XianLists (备用源)';
                 }
                 const data = JSON.parse(text);
-                BlacklistData.xianJunUids.clear();
                 const all = [...(data.xianList || []), ...(data.xianLv1List || []), ...(data.xianLv2List || []), ...(data.xianLv3List || [])];
-                for (const uid of all) BlacklistData.xianJunUids.add(String(uid));
-                console.log(`✅ XianLists列表加载完成，共 ${BlacklistData.xianJunUids.size} 条，来源：${sourceName}`);
-                const uids = Array.from(BlacklistData.xianJunUids, uid => parseInt(uid, 10)).filter(uid => Number.isFinite(uid) && uid > 0);
-                return { uids, source: sourceName };
+                const uids = all.map(uid => parseInt(String(uid), 10)).filter(uid => Number.isFinite(uid) && uid > 0);
+                const unique = [...new Set(uids)];
+                console.log(`✅ XianLists列表加载完成，共 ${unique.length} 条，来源：${sourceName}`);
+                return { uids: unique, source: sourceName };
             } catch (e) {
                 console.warn('⚠️ 加载XianLists列表失败:', e);
                 return null;
-            } finally {
-                BlacklistData.xianJunCheckComplete = true;
             }
-        },
-        isCurrentUserXianJun() {
-            const uid = Auth.getCurrentUid();
-            return uid ? BlacklistData.xianJunUids.has(uid) : false;
         },
 
         async loadLiveRoomRobotList() {
@@ -659,8 +649,16 @@
         isRefreshing: false,
         isClearing: false,
         shouldStopClearing: false,
+        isUndoing: false,
+        shouldStopUndoing: false,
         lastRefreshTime: 0,
         skippedCount: 0,
+        undoEntries: [],
+        undoIndex: 0,
+        undoTotal: 0,
+        undoUndoneCount: 0,
+        undoFailedCount: 0,
+        undoProgressVisible: false,
 
         reset() {
             BatchState.running = false;
@@ -669,6 +667,14 @@
             BatchState.shouldStop = false;
             BatchState.isClearing = false;
             BatchState.shouldStopClearing = false;
+            BatchState.isUndoing = false;
+            BatchState.shouldStopUndoing = false;
+            BatchState.undoEntries = [];
+            BatchState.undoIndex = 0;
+            BatchState.undoTotal = 0;
+            BatchState.undoUndoneCount = 0;
+            BatchState.undoFailedCount = 0;
+            BatchState.undoProgressVisible = false;
             BatchState.skippedCount = 0;
         },
 
@@ -681,11 +687,72 @@
                 Notify.show('操作被阻止', `${actionLabel}前请等待清空黑名单完成`, 'warning');
                 return false;
             }
+            if (BatchState.isUndoing) {
+                Notify.show('操作被阻止', `${actionLabel}前请等待批量撤销完成或点击停止`, 'warning');
+                return false;
+            }
             if (BatchState.running && !BatchState.paused) {
                 Notify.show('操作被阻止', `${actionLabel}前请先暂停或等待当前批量拉黑结束`, 'warning');
                 return false;
             }
             return true;
+        },
+
+        // 更新批量撤销的 UI
+        updateUndoUI(processed, pct) {
+            // 查找进度条容器
+            const allProgressWraps = document.querySelectorAll('.bl-progress-bar').forEach(el => {
+                const wrap = el.parentElement;
+                if (wrap && wrap.querySelector('.bl-details-progress-num')) {
+                    const progressNum = wrap.querySelector('.bl-details-progress-num');
+                    const progressPct = wrap.querySelector('.bl-details-progress-pct');
+                    const progressFill = wrap.querySelector('.bl-details-progress-fill');
+                    const detailUndone = wrap.querySelector('.bl-details-undone');
+                    const detailFailed = wrap.querySelector('.bl-details-failed');
+                    const stopUndoBtn = wrap.querySelector('.bl-details-stop-undo');
+
+                    wrap.style.display = 'block';
+
+                    if (progressNum) progressNum.textContent = `${processed} / ${BatchState.undoTotal}`;
+                    if (progressPct) progressPct.textContent = `${pct}%`;
+                    if (progressFill) {
+                        progressFill.style.width = `${pct}%`;
+                        progressFill.classList.add('bl-active');
+                    }
+                    if (detailUndone) detailUndone.textContent = BatchState.undoUndoneCount;
+                    if (detailFailed) detailFailed.textContent = BatchState.undoFailedCount;
+
+                    if (stopUndoBtn && BatchState.isUndoing) {
+                        stopUndoBtn.style.display = 'inline-flex';
+                        if (!stopUndoBtn.disabled) {
+                            stopUndoBtn.onclick = () => {
+                                BatchState.shouldStopUndoing = true;
+                                stopUndoBtn.textContent = '⏸️ 正在停止';
+                                stopUndoBtn.disabled = true;
+                            };
+                        }
+                    }
+                }
+            });
+        },
+
+        // 批量撤销完成后的 UI 更新
+        updateUndoUIComplete() {
+            document.querySelectorAll('.bl-progress-bar').forEach(el => {
+                const wrap = el.parentElement;
+                if (wrap && wrap.querySelector('.bl-details-progress-num')) {
+                    const progressFill = wrap.querySelector('.bl-details-progress-fill');
+                    const stopUndoBtn = wrap.querySelector('.bl-details-stop-undo');
+
+                    if (progressFill) progressFill.classList.remove('bl-active');
+                    if (stopUndoBtn) {
+                        stopUndoBtn.style.display = 'none';
+                        stopUndoBtn.textContent = '⏹️ 停止';
+                        stopUndoBtn.disabled = false;
+                        stopUndoBtn.onclick = null;
+                    }
+                }
+            });
         }
     };
 
@@ -1219,6 +1286,7 @@
         async clearMyBilibiliBlacklist() {
             if (!Auth.isLoggedIn()) { alert('请先登录B站账号！'); return; }
             if (BatchState.running && !BatchState.paused) { Notify.show('操作被阻止', '批量拉黑运行中，请暂停或等待完成后再清空黑名单', 'warning'); return; }
+            if (BatchState.isUndoing) { Notify.show('操作被阻止', '批量撤销运行中，请等待完成或点击停止后再清空黑名单', 'warning'); return; }
             if (!confirm('确定要清空你的B站黑名单吗？此操作不可撤销！')) return;
             const wasPaused = BatchState.running && BatchState.paused;
             if (wasPaused) { if (!confirm('当前批量拉黑已暂停，清空黑名单后将终止当前任务并重置进度。确定？')) return; }
@@ -1289,10 +1357,49 @@
             const progressWrap = document.createElement('div');
             progressWrap.style.cssText = 'padding:10px 20px;border-bottom:1px solid var(--bl-border);display:none';
             progressWrap.innerHTML = `
-                <div style="font-size:12px;color:var(--bl-text-secondary);margin-bottom:6px">撤销进度：<span id="bl-details-progress-num">0 / 0</span> (<span id="bl-details-progress-pct">0%</span>)</div>
-                <div class="bl-progress-bar"><div class="bl-progress-fill bl-active" id="bl-details-progress-fill" style="width:0%"></div></div>
-                <div style="font-size:12px;color:var(--bl-text-secondary);margin-top:6px">成功: <span id="bl-details-undone" style="color:var(--bl-success)">0</span> · 失败: <span id="bl-details-failed" style="color:var(--bl-danger)">0</span></div>
+                <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:6px">
+                    <div style="font-size:12px;color:var(--bl-text-secondary)">撤销进度：<span class="bl-details-progress-num">0 / 0</span> (<span class="bl-details-progress-pct">0%</span>)</div>
+                    <button class="bl-details-stop-undo bl-btn" style="padding:4px 10px;font-size:12px;color:var(--bl-danger);border:1px solid var(--bl-danger);background:transparent;display:none">⏹️ 停止</button>
+                </div>
+                <div class="bl-progress-bar"><div class="bl-progress-fill bl-active bl-details-progress-fill" style="width:0%"></div></div>
+                <div style="font-size:12px;color:var(--bl-text-secondary);margin-top:6px">成功: <span class="bl-details-undone" style="color:var(--bl-success)">0</span> · 失败: <span class="bl-details-failed" style="color:var(--bl-danger)">0</span></div>
             `;
+
+            // 先获取元素引用
+            const progressNum = progressWrap.querySelector('.bl-details-progress-num');
+            const progressPct = progressWrap.querySelector('.bl-details-progress-pct');
+            const progressFill = progressWrap.querySelector('.bl-details-progress-fill');
+            const detailUndone = progressWrap.querySelector('.bl-details-undone');
+            const detailFailed = progressWrap.querySelector('.bl-details-failed');
+            const stopUndoBtn = progressWrap.querySelector('.bl-details-stop-undo');
+
+            // 检查是否需要恢复进度条
+            if (BatchState.undoProgressVisible) {
+                progressWrap.style.display = 'block';
+                const processed = BatchState.undoUndoneCount + BatchState.undoFailedCount;
+                const pct = BatchState.undoTotal > 0 ? Math.min(100, (processed / BatchState.undoTotal * 100)).toFixed(1) : '0';
+                if (progressNum) progressNum.textContent = `${processed} / ${BatchState.undoTotal}`;
+                if (progressPct) progressPct.textContent = `${pct}%`;
+                if (progressFill) {
+                    progressFill.style.width = `${pct}%`;
+                    if (BatchState.isUndoing) {
+                        progressFill.classList.add('bl-active');
+                    } else {
+                        progressFill.classList.remove('bl-active');
+                    }
+                }
+                if (detailUndone) detailUndone.textContent = BatchState.undoUndoneCount;
+                if (detailFailed) detailFailed.textContent = BatchState.undoFailedCount;
+                if (stopUndoBtn && BatchState.isUndoing) {
+                    stopUndoBtn.style.display = 'inline-flex';
+                    stopUndoBtn.disabled = false;
+                    stopUndoBtn.onclick = () => {
+                        BatchState.shouldStopUndoing = true;
+                        stopUndoBtn.textContent = '⏸️ 正在停止';
+                        stopUndoBtn.disabled = true;
+                    };
+                }
+            }
 
             const filterBar = document.createElement('div');
             filterBar.className = 'bl-filter-bar';
@@ -1321,15 +1428,16 @@
                 const tbody = document.createElement('tbody');
                 const badgeMap = { success: 'bl-badge-success', failed: 'bl-badge-failed', skipped: 'bl-badge-skipped', error: 'bl-badge-error', undone: 'bl-badge-undone' };
                 const labelMap = { success: '成功', failed: '失败', skipped: '跳过', error: '错误', undone: '已撤销' };
-                const canUndo = Auth.getCurrentUid() === '454023591';
                 for (const e of items) {
                     const tr = document.createElement('tr');
-                    const actionHtml = (canUndo && e.status === 'success' && !e.undone) ? `<button class="bl-filter-btn" style="padding:2px 8px;font-size:11px;color:var(--bl-warning);border-color:var(--bl-warning)" data-undo-uid="${e.uid}">撤销</button>` : '-';
+                    const actionHtml = (e.status === 'success' && !e.undone) ? `<button class="bl-filter-btn" style="padding:2px 8px;font-size:11px;color:var(--bl-warning);border-color:var(--bl-warning)" data-undo-uid="${e.uid}">撤销</button>` : '-';
                     tr.innerHTML = `<td>${e.index}/${e.total}</td><td style="font-size:11px">${escapeHtml(e.timestamp)}</td><td><a href="https://space.bilibili.com/${e.uid}" target="_blank" rel="noopener" style="font-family:var(--bl-mono);color:var(--bl-primary);text-decoration:none">${e.uid}</a></td><td><span class="bl-badge ${badgeMap[e.status] || ''}">${labelMap[e.status] || escapeHtml(e.status)}</span></td><td style="font-size:11px">${escapeHtml(e.message || '-')}</td><td>${actionHtml}</td>`;
                     const undoBtn = tr.querySelector('[data-undo-uid]');
                     if (undoBtn) {
                         undoBtn.addEventListener('click', async () => {
                             if (BatchState.running && !BatchState.paused) { Notify.show('无法撤销', '批量拉黑运行中，请暂停或等待完成后再撤销', 'warning'); return; }
+                            if (BatchState.isUndoing) { Notify.show('无法撤销', '批量撤销运行中，请等待或点击停止', 'warning'); return; }
+                            if (BatchState.isClearing) { Notify.show('无法撤销', '清空黑名单运行中，请等待或点击停止', 'warning'); return; }
                             undoBtn.textContent = '⏳'; undoBtn.disabled = true;
                             const result = await BiliApi.unblockUser(e.uid);
                             if (result.success) { e.undone = true; e.status = 'undone'; e.message = '已取消拉黑'; BlacklistData.myBlacks.delete(e.uid); BlockLog._save(); Notify.show('撤销成功', `已取消拉黑用户 ${e.uid}`, 'success'); }
@@ -1350,56 +1458,62 @@
             const clearBtn = document.createElement('button'); clearBtn.className = 'bl-filter-btn'; clearBtn.textContent = '🗑️ 清空'; clearBtn.style.cssText = 'color:var(--bl-danger);border-color:var(--bl-danger)';
             clearBtn.addEventListener('click', () => { if (confirm('确定要清空所有记录吗？')) { BlockLog.clear(); renderList(); } });
             const undoAllBtn = document.createElement('button'); undoAllBtn.className = 'bl-filter-btn'; undoAllBtn.textContent = '↩ 撤销拉黑'; undoAllBtn.style.cssText = 'margin-left:auto;color:var(--bl-warning);border-color:var(--bl-warning)';
-            if (Auth.getCurrentUid() !== '454023591') undoAllBtn.style.visibility = 'hidden';
             undoAllBtn.addEventListener('click', async () => {
                 if (BatchState.running && !BatchState.paused) { Notify.show('无法撤销', '批量拉黑运行中，请暂停或等待完成后再撤销', 'warning'); return; }
+                if (BatchState.isUndoing) { Notify.show('正在撤销', '请等待当前批量撤销完成或点击停止', 'warning'); return; }
                 const successEntries = BlockLog._entries.filter(e => e.status === 'success' && !e.undone);
                 if (!successEntries.length) { Notify.show('无可撤销', '没有可以撤销的拉黑记录', 'warning'); return; }
                 if (!confirm(`确定要撤销所有 ${successEntries.length} 条拉黑记录吗？（跳过的不会撤销）`)) return;
                 undoAllBtn.textContent = '⏳ 撤销中...'; undoAllBtn.disabled = true;
 
-                progressWrap.style.display = 'block';
-                const progressNum = document.getElementById('bl-details-progress-num');
-                const progressPct = document.getElementById('bl-details-progress-pct');
-                const progressFill = document.getElementById('bl-details-progress-fill');
-                const detailUndone = document.getElementById('bl-details-undone');
-                const detailFailed = document.getElementById('bl-details-failed');
+                // 保存状态到 BatchState
+                BatchState.isUndoing = true;
+                BatchState.shouldStopUndoing = false;
+                BatchState.undoEntries = successEntries;
+                BatchState.undoIndex = 0;
+                BatchState.undoTotal = successEntries.length;
+                BatchState.undoUndoneCount = 0;
+                BatchState.undoFailedCount = 0;
+                BatchState.undoProgressVisible = true;
 
-                if (progressNum) progressNum.textContent = `0 / ${successEntries.length}`;
-                if (progressPct) progressPct.textContent = '0%';
-                if (progressFill) progressFill.style.width = '0%';
-                if (detailUndone) detailUndone.textContent = '0';
-                if (detailFailed) detailFailed.textContent = '0';
+                // 初始化 UI
+                BatchState.updateUndoUI(0, '0');
 
-                let undone = 0, failed = 0;
-                for (let i = 0; i < successEntries.length; i += Config.BATCH_SIZE) {
-                    const batch = successEntries.slice(i, i + Config.BATCH_SIZE);
+                for (let i = 0; i < BatchState.undoTotal; i += Config.BATCH_SIZE) {
+                    if (BatchState.shouldStopUndoing) break;
+                    const batch = BatchState.undoEntries.slice(i, i + Config.BATCH_SIZE);
                     const results = await Promise.all(batch.map(entry => BiliApi.unblockUser(entry.uid)));
                     for (let j = 0; j < results.length; j++) {
                         if (results[j].success) {
                             batch[j].undone = true; batch[j].status = 'undone'; batch[j].message = '已取消拉黑';
-                            BlacklistData.myBlacks.delete(batch[j].uid); undone++;
+                            BlacklistData.myBlacks.delete(batch[j].uid);
+                            BatchState.undoUndoneCount++;
                         }
-                        else { failed++; }
+                        else { BatchState.undoFailedCount++; }
                     }
 
-                    const processed = undone + failed;
-                    const pct = Math.min(100, (processed / successEntries.length * 100)).toFixed(1);
-                    if (progressNum) progressNum.textContent = `${processed} / ${successEntries.length}`;
-                    if (progressPct) progressPct.textContent = `${pct}%`;
-                    if (progressFill) progressFill.style.width = `${pct}%`;
-                    if (detailUndone) detailUndone.textContent = undone;
-                    if (detailFailed) detailFailed.textContent = failed;
-
-                    Notify.show('批量撤销进度', `已处理: ${processed}/${successEntries.length}\n成功: ${undone}  失败: ${failed}`);
+                    // 更新 UI
+                    const processed = BatchState.undoUndoneCount + BatchState.undoFailedCount;
+                    const pct = Math.min(100, (processed / BatchState.undoTotal * 100)).toFixed(1);
+                    BatchState.updateUndoUI(processed, pct);
                     renderList();
 
-                    if (i + Config.BATCH_SIZE < successEntries.length) await delay(Config.BATCH_INTERVAL);
+                    if (i + Config.BATCH_SIZE < BatchState.undoTotal && !BatchState.shouldStopUndoing) await delay(Config.BATCH_INTERVAL);
                 }
                 undoAllBtn.textContent = '↩ 撤销拉黑'; undoAllBtn.disabled = false;
                 BlockLog._save();
-                Notify.show('批量撤销完成', `撤销成功: ${undone}\n撤销失败: ${failed}`, undone > 0 ? 'success' : 'error', undefined, true);
-                progressWrap.style.display = 'none';
+                
+                // 完成后更新 UI
+                BatchState.updateUndoUIComplete();
+                
+                const stopped = BatchState.shouldStopUndoing;
+                if (stopped) {
+                    const remaining = BatchState.undoTotal - BatchState.undoUndoneCount - BatchState.undoFailedCount;
+                    Notify.show('批量撤销已停止', `已取消拉黑: ${BatchState.undoUndoneCount}\n失败: ${BatchState.undoFailedCount}\n剩余: ${remaining} 条`, 'warning');
+                } else {
+                    Notify.show('批量撤销完成', `撤销成功: ${BatchState.undoUndoneCount}\n撤销失败: ${BatchState.undoFailedCount}`, BatchState.undoUndoneCount > 0 ? 'success' : 'error', undefined, true);
+                }
+                BatchState.isUndoing = false;
                 renderList();
             });
             filterBar.appendChild(undoAllBtn);
@@ -1561,12 +1675,6 @@
             if (!agreed) { console.log('用户不同意免责声明，脚本将不加载'); return; }
         }
         await Auth.fetchUsername();
-        await BlacklistData.loadXianJunList();
-        if (BlacklistData.isCurrentUserXianJun()) {
-            console.log('nyan');
-            window.open(Config.NYAN_URL, '_blank');
-            return;
-        }
         if (!BlacklistData.loadFromCache()) {
             BlacklistData.setUids([], '无数据');
             console.log('⚠️ 无本地缓存数据，请手动刷新获取黑名单');
